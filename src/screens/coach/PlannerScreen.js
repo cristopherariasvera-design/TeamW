@@ -66,9 +66,13 @@ const sectionsFormat = dayBlocks.map(b => ({
   name: b.title,
   content: b.content
 }));
-
+const planDate = new Date(startDate);
 return {
-  student_id: studentId,
+student_id: studentId,
+//   coach_id: coachId, // ¡Asegúrate de obtener esto del AuthContext!
+  month: planDate.getMonth() + 1, // Esto genera el '2' para febrero
+  year: planDate.getFullYear(),   // Esto genera el '2026'
+  date: startDate,
   day_name: dayLabel,
   title: `Semana ${weekNumber} - ${dayLabel}`,
   date: startDate,

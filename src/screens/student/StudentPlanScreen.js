@@ -6,6 +6,7 @@ import {
   ScrollView,
   TouchableOpacity,
   ActivityIndicator,
+  Alert,
 } from 'react-native';
 import { useAuth } from '../../contexts/AuthContext';
 import { supabase } from '../../config/supabaseClient';
@@ -24,12 +25,16 @@ export default function StudentPlanScreen({ navigation }) {
   ];
 
   useEffect(() => {
-    loadPlans();
-  }, [selectedMonth, selectedYear]);
+    if (profile?.id) {
+      loadPlans();
+    }
+  }, [selectedMonth, selectedYear, profile?.id]);
 
   const loadPlans = async () => {
     try {
       setLoading(true);
+      
+      // Consultamos los planes del alumno para el mes y año seleccionados
       const { data, error } = await supabase
         .from('plans')
         .select('*')
@@ -39,9 +44,36 @@ export default function StudentPlanScreen({ navigation }) {
         .order('date', { ascending: true });
 
       if (error) throw error;
-      setPlans(data || []);
+
+      // --- PROCESAMIENTO CRÍTICO DE DATOS ---
+      // Esto asegura que 'sections' siempre sea un Array usable, 
+      // sin importar si en la DB se guardó como texto o como JSON.
+      const sanitizedPlans = (data || []).map(plan => {
+        let processedSections = [];
+        
+        if (plan.sections) {
+          if (typeof plan.sections === 'string') {
+            try {
+              processedSections = JSON.parse(plan.sections);
+            } catch (e) {
+              console.error("Error parseando sections string:", e);
+              processedSections = [];
+            }
+          } else {
+            processedSections = plan.sections;
+          }
+        }
+        
+        return {
+          ...plan,
+          sections: Array.isArray(processedSections) ? processedSections : []
+        };
+      });
+
+      setPlans(sanitizedPlans);
     } catch (error) {
       console.error('Error loading plans:', error);
+      Alert.alert("Error", "No se pudieron cargar los entrenamientos.");
     } finally {
       setLoading(false);
     }
@@ -50,6 +82,7 @@ export default function StudentPlanScreen({ navigation }) {
   const groupPlansByWeek = () => {
     const weeks = {};
     plans.forEach(plan => {
+      // Si no tiene semana definida, lo mandamos a la 1 por defecto
       const weekNum = plan.week_number || 1;
       if (!weeks[weekNum]) {
         weeks[weekNum] = [];
@@ -60,9 +93,10 @@ export default function StudentPlanScreen({ navigation }) {
   };
 
   const formatDate = (dateString) => {
+    if (!dateString) return "S/F";
     const date = new Date(dateString);
     const days = ['Dom', 'Lun', 'Mar', 'Mié', 'Jue', 'Vie', 'Sáb'];
-    return `${days[date.getDay()]} ${date.getDate()}`;
+    return `${days[date.getUTCDay()]} ${date.getUTCDate()}`;
   };
 
   const changeMonth = (direction) => {
@@ -111,27 +145,27 @@ export default function StudentPlanScreen({ navigation }) {
       </View>
 
       {/* Lista de semanas */}
-      <ScrollView style={styles.content}>
+      <ScrollView style={styles.content} contentContainerStyle={{ paddingBottom: 30 }}>
         {Object.keys(weeks).length === 0 ? (
           <View style={styles.emptyContainer}>
             <Ionicons name="calendar-outline" size={64} color="#333" />
             <Text style={styles.emptyText}>No hay planificación para este mes</Text>
             <Text style={styles.emptySubtext}>
-              Tu coach aún no ha cargado entrenamientos
+              Tu coach aún no ha cargado entrenamientos para este periodo.
             </Text>
           </View>
         ) : (
-          Object.keys(weeks).sort().map(weekNum => (
+          Object.keys(weeks).sort((a, b) => a - b).map(weekNum => (
             <View key={weekNum} style={styles.weekContainer}>
               <View style={styles.weekHeader}>
                 <Text style={styles.weekTitle}>Semana {weekNum}</Text>
                 <Text style={styles.weekSubtitle}>
-                  {weeks[weekNum].length} día{weeks[weekNum].length !== 1 ? 's' : ''}
+                  {weeks[weekNum].length} sesión{weeks[weekNum].length !== 1 ? 'es' : ''}
                 </Text>
               </View>
 
               <View style={styles.daysContainer}>
-                {weeks[weekNum].map((plan, index) => (
+                {weeks[weekNum].map((plan) => (
                   <TouchableOpacity
                     key={plan.id}
                     style={styles.dayCard}
@@ -140,22 +174,24 @@ export default function StudentPlanScreen({ navigation }) {
                     <View style={styles.dayHeader}>
                       <View style={styles.dayInfo}>
                         <Text style={styles.dayDate}>{formatDate(plan.date)}</Text>
-                        <Text style={styles.dayTitle}>{plan.title || `Día ${index + 1}`}</Text>
+                        <Text style={styles.dayTitle}>{plan.title || `Sesión`}</Text>
                       </View>
                       
-                      {plan.is_done ? (
-                        <View style={styles.completedBadge}>
-                          <Ionicons name="checkmark-circle" size={24} color="#4CAF50" />
-                        </View>
-                      ) : (
-                        <Ionicons name="chevron-forward" size={24} color="#999" />
-                      )}
+                      <View style={styles.rightAction}>
+                        {plan.is_done ? (
+                          <Ionicons name="checkmark-circle" size={26} color="#4CAF50" />
+                        ) : (
+                          <Ionicons name="chevron-forward" size={24} color="#444" />
+                        )}
+                      </View>
                     </View>
 
                     {plan.sections && plan.sections.length > 0 && (
-                      <Text style={styles.sectionsPreview}>
-                        {plan.sections.length} sección{plan.sections.length !== 1 ? 'es' : ''}
-                      </Text>
+                      <View style={styles.previewContainer}>
+                        <Text style={styles.sectionsPreview}>
+                          {plan.sections.length} bloques de entrenamiento
+                        </Text>
+                      </View>
                     )}
                   </TouchableOpacity>
                 ))}
@@ -169,124 +205,57 @@ export default function StudentPlanScreen({ navigation }) {
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#000',
-  },
-  loadingContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: '#000',
-  },
-  loadingText: {
-    color: '#fff',
-    marginTop: 16,
-    fontSize: 16,
-  },
+  container: { flex: 1, backgroundColor: '#000' },
+  loadingContainer: { flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#000' },
+  loadingText: { color: '#666', marginTop: 16, fontSize: 14 },
   monthSelector: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    padding: 20,
-    backgroundColor: '#1a1a1a',
+    paddingHorizontal: 20,
+    paddingVertical: 15,
+    backgroundColor: '#0a0a0a',
     borderBottomWidth: 1,
-    borderBottomColor: '#333',
+    borderBottomColor: '#1a1a1a',
   },
-  monthButton: {
-    padding: 8,
-  },
-  monthInfo: {
-    alignItems: 'center',
-  },
-  monthText: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    color: '#fff',
-  },
-  yearText: {
-    fontSize: 14,
-    color: '#999',
-    marginTop: 4,
-  },
-  content: {
-    flex: 1,
-  },
-  emptyContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    paddingVertical: 80,
-  },
-  emptyText: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: '#fff',
-    marginTop: 16,
-  },
-  emptySubtext: {
-    fontSize: 14,
-    color: '#999',
-    marginTop: 8,
-    textAlign: 'center',
-  },
-  weekContainer: {
-    marginBottom: 24,
-  },
+  monthButton: { padding: 10 },
+  monthInfo: { alignItems: 'center' },
+  monthText: { fontSize: 22, fontWeight: 'bold', color: '#fff' },
+  yearText: { fontSize: 12, color: '#FFD700', marginTop: 2, letterSpacing: 1 },
+  content: { flex: 1 },
+  emptyContainer: { flex: 1, justifyContent: 'center', alignItems: 'center', marginTop: 100, paddingHorizontal: 40 },
+  emptyText: { fontSize: 18, fontWeight: 'bold', color: '#fff', marginTop: 16 },
+  emptySubtext: { fontSize: 14, color: '#666', marginTop: 8, textAlign: 'center', lineHeight: 20 },
+  weekContainer: { marginBottom: 10 },
   weekHeader: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
     paddingHorizontal: 20,
-    paddingVertical: 12,
-    backgroundColor: '#1a1a1a',
+    paddingVertical: 15,
+    backgroundColor: '#080808',
   },
-  weekTitle: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: '#FFD700',
-  },
-  weekSubtitle: {
-    fontSize: 14,
-    color: '#999',
-  },
-  daysContainer: {
-    paddingHorizontal: 20,
-    paddingTop: 12,
-  },
+  weekTitle: { fontSize: 16, fontWeight: 'bold', color: '#FFD700', textTransform: 'uppercase' },
+  weekSubtitle: { fontSize: 12, color: '#444' },
+  daysContainer: { paddingHorizontal: 15, paddingTop: 10 },
   dayCard: {
-    backgroundColor: '#1a1a1a',
-    borderRadius: 12,
+    backgroundColor: '#111',
+    borderRadius: 15,
     padding: 16,
     marginBottom: 12,
     borderWidth: 1,
-    borderColor: '#333',
+    borderColor: '#1a1a1a',
   },
-  dayHeader: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
+  dayHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center' },
+  dayInfo: { flex: 1 },
+  dayDate: { fontSize: 11, color: '#FFD700', fontWeight: '700', marginBottom: 4, textTransform: 'uppercase' },
+  dayTitle: { fontSize: 17, fontWeight: 'bold', color: '#fff' },
+  rightAction: { marginLeft: 10 },
+  previewContainer: {
+    marginTop: 12,
+    paddingTop: 12,
+    borderTopWidth: 1,
+    borderTopColor: '#1a1a1a',
   },
-  dayInfo: {
-    flex: 1,
-  },
-  dayDate: {
-    fontSize: 12,
-    color: '#FFD700',
-    fontWeight: '600',
-    marginBottom: 4,
-  },
-  dayTitle: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: '#fff',
-  },
-  completedBadge: {
-    marginLeft: 12,
-  },
-  sectionsPreview: {
-    fontSize: 14,
-    color: '#999',
-    marginTop: 8,
-  },
+  sectionsPreview: { fontSize: 13, color: '#555', fontStyle: 'italic' },
 });
