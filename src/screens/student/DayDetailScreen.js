@@ -9,17 +9,37 @@ import {
 } from 'react-native';
 import { supabase } from '../../config/supabaseClient';
 import { Ionicons } from '@expo/vector-icons';
-// 1. IMPORTA EL MODAL (Asegúrate de que la ruta sea correcta)
 import CommentsModal from './CommentsModal';
 
 export default function DayDetailScreen({ route, navigation }) {
   const { plan } = route.params;
   const [isDone, setIsDone] = useState(plan.is_done);
-  
-  // 2. ESTADO PARA MOSTRAR/OCULTAR EL MODAL
   const [commentsVisible, setCommentsVisible] = useState(false);
 
+  // --- LÓGICA DE PROCESAMIENTO DE SECCIONES ---
+  // Esta función evita el error .map is not a function
+  const getProcessedSections = () => {
+    if (!plan.sections) return [];
+    
+    // Si es un string (texto), lo convertimos a objeto
+    if (typeof plan.sections === 'string') {
+      try {
+        return JSON.parse(plan.sections);
+      } catch (e) {
+        console.error("Error al parsear secciones:", e);
+        return [];
+      }
+    }
+    
+    // Si ya es un array/objeto, lo devolvemos tal cual
+    return plan.sections;
+  };
+
+  const sectionsToRender = getProcessedSections();
+  // --------------------------------------------
+
   const formatDate = (dateString) => {
+    if (!dateString) return "";
     const date = new Date(dateString);
     const days = ['Domingo', 'Lunes', 'Martes', 'Miércoles', 'Jueves', 'Viernes', 'Sábado'];
     const months = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
@@ -49,7 +69,6 @@ export default function DayDetailScreen({ route, navigation }) {
 
   return (
     <View style={styles.container}>
-      {/* Header */}
       <View style={styles.header}>
         <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
           <Ionicons name="arrow-back" size={24} color="#fff" />
@@ -67,12 +86,12 @@ export default function DayDetailScreen({ route, navigation }) {
         </TouchableOpacity>
       </View>
 
-      {/* Content */}
       <ScrollView style={styles.content}>
-        {plan.sections && plan.sections.length > 0 ? (
-          plan.sections.map((section, index) => (
+        {/* USAMOS LA VARIABLE PROCESADA seccionesToRender */}
+        {sectionsToRender && sectionsToRender.length > 0 ? (
+          sectionsToRender.map((section, index) => (
             <View key={index} style={styles.sectionCard}>
-              <Text style={styles.sectionName}>{section.name}</Text>
+              <Text style={styles.sectionName}>{section.name || section.title}</Text>
               <Text style={styles.sectionContent}>{section.content}</Text>
             </View>
           ))
@@ -82,10 +101,9 @@ export default function DayDetailScreen({ route, navigation }) {
           </View>
         )}
 
-        {/* 3. BOTÓN DE COMENTARIOS ACTUALIZADO */}
         <TouchableOpacity 
           style={styles.commentsButton}
-          onPress={() => setCommentsVisible(true)} // Abrir modal
+          onPress={() => setCommentsVisible(true)}
         >
           <Ionicons name="chatbubble-outline" size={20} color="#FFD700" />
           <Text style={styles.commentsButtonText}>Agregar comentario</Text>
@@ -97,22 +115,17 @@ export default function DayDetailScreen({ route, navigation }) {
         </View>
       </ScrollView>
 
-      {/* 4. EL COMPONENTE DEL MODAL (Invisible hasta que sea true) */}
       <CommentsModal 
         visible={commentsVisible} 
-        onClose={() => setCommentsVisible(false)} // Cerrar modal
-        planId={plan.id} // Pasar el ID del entrenamiento
+        onClose={() => setCommentsVisible(false)} 
+        planId={plan.id} 
       />
     </View>
   );
 }
 
-// ... (tus estilos se mantienen iguales)
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: '#000',
-  },
+  container: { flex: 1, backgroundColor: '#000' },
   header: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -120,29 +133,13 @@ const styles = StyleSheet.create({
     backgroundColor: '#1a1a1a',
     borderBottomWidth: 1,
     borderBottomColor: '#333',
-    paddingTop: 50, // Ajuste para que no choque con la notch
+    paddingTop: 50,
   },
-  backButton: {
-    marginRight: 16,
-  },
-  headerInfo: {
-    flex: 1,
-  },
-  headerDate: {
-    fontSize: 12,
-    color: '#FFD700',
-    fontWeight: '600',
-  },
-  headerTitle: {
-    fontSize: 20,
-    fontWeight: 'bold',
-    color: '#fff',
-    marginTop: 4,
-  },
-  content: {
-    flex: 1,
-    padding: 20,
-  },
+  backButton: { marginRight: 16 },
+  headerInfo: { flex: 1 },
+  headerDate: { fontSize: 12, color: '#FFD700', fontWeight: '600' },
+  headerTitle: { fontSize: 20, fontWeight: 'bold', color: '#fff', marginTop: 4 },
+  content: { flex: 1, padding: 20 },
   sectionCard: {
     backgroundColor: '#1a1a1a',
     borderRadius: 12,
@@ -151,25 +148,10 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#333',
   },
-  sectionName: {
-    fontSize: 16,
-    fontWeight: 'bold',
-    color: '#FFD700',
-    marginBottom: 12,
-  },
-  sectionContent: {
-    fontSize: 15,
-    color: '#fff',
-    lineHeight: 24,
-  },
-  emptyContainer: {
-    padding: 40,
-    alignItems: 'center',
-  },
-  emptyText: {
-    fontSize: 16,
-    color: '#999',
-  },
+  sectionName: { fontSize: 16, fontWeight: 'bold', color: '#FFD700', marginBottom: 12 },
+  sectionContent: { fontSize: 15, color: '#fff', lineHeight: 24 },
+  emptyContainer: { padding: 40, alignItems: 'center' },
+  emptyText: { fontSize: 16, color: '#999' },
   commentsButton: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -182,25 +164,8 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#333',
   },
-  commentsButtonText: {
-    color: '#FFD700',
-    fontSize: 16,
-    fontWeight: '600',
-    marginLeft: 8,
-  },
-  commentsSection: {
-    marginBottom: 40,
-  },
-  commentsSectionTitle: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    color: '#fff',
-    marginBottom: 16,
-  },
-  noComments: {
-    fontSize: 14,
-    color: '#999',
-    textAlign: 'center',
-    padding: 20,
-  },
+  commentsButtonText: { color: '#FFD700', fontSize: 16, fontWeight: '600', marginLeft: 8 },
+  commentsSection: { marginBottom: 40 },
+  commentsSectionTitle: { fontSize: 18, fontWeight: 'bold', color: '#fff', marginBottom: 16 },
+  noComments: { fontSize: 14, color: '#999', textAlign: 'center', padding: 20 },
 });

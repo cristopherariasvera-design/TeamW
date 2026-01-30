@@ -7,7 +7,9 @@ import { useAuth } from '../contexts/AuthContext';
 // Importamos las pantallas
 import CoachDashboard from '../screens/coach/CoachDashboard';
 import StudentDetailView from '../screens/coach/StudentDetailView';
-import DayDetailScreen from '../screens/student/DayDetailScreen'; // Reutilizamos la del alumno
+import DayDetailScreen from '../screens/student/DayDetailScreen';
+import PlannerScreen from '../screens/coach/PlannerScreen';
+
 
 const Stack = createNativeStackNavigator();
 export default function CoachNavigator() {
@@ -47,6 +49,11 @@ export default function CoachNavigator() {
         component={DayDetailScreen} 
         options={{ title: 'Detalle del Entrenamiento' }}
         />
+      <Stack.Screen 
+        name="PlannerScreen" 
+        component={PlannerScreen} 
+        options={{ title: 'Cargar Planificación' }} 
+      />
     </Stack.Navigator>
   );
 }

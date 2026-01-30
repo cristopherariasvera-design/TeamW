@@ -1,9 +1,12 @@
 import React, { useState, useEffect } from 'react';
-import { createNativeStackNavigator } from '@react-navigation/native-stack';
-import { NavigationContainer } from '@react-navigation/native';
 import { createStackNavigator } from '@react-navigation/stack';
+import { NavigationContainer } from '@react-navigation/native';
 import { useAuth } from '../contexts/AuthContext';
 import { ActivityIndicator, View, Text, TouchableOpacity } from 'react-native';
+
+// --- IMPORTACIONES PARA LOS ICONOS ---
+import * as Font from 'expo-font';
+import { Ionicons, FontAwesome, MaterialIcons, MaterialCommunityIcons } from '@expo/vector-icons';
 
 // Auth screens
 import LoginScreen from '../screens/auth/LoginScreen';
@@ -14,23 +17,42 @@ import AdminNavigator from './AdminNavigator';
 import CoachNavigator from './CoachNavigator';
 import StudentNavigator from './StudentNavigator';
 
-// Importa esto si ya creaste el archivo de notificaciones, si no, comenta la línea del useEffect abajo
-// import { registerForPushNotificationsAsync } from '../config/NotificationHelper'; 
-
 const Stack = createStackNavigator();
 
 export default function AppNavigator() {
   const { user, profile, loading, signOut } = useAuth();
+  
+  // Nuevo estado para las fuentes
+  const [fontsLoaded, setFontsLoaded] = useState(false);
 
-  // EL EFFECT DEBE IR AQUÍ ADENTRO
+  // EFECTO PARA CARGAR FUENTES (ICONOS)
+  useEffect(() => {
+    async function loadResources() {
+      try {
+        await Font.loadAsync({
+          ...Ionicons.font,
+          ...FontAwesome.font,
+          ...MaterialIcons.font,
+          ...MaterialCommunityIcons.font,
+        });
+      } catch (e) {
+        console.warn("Error cargando fuentes:", e);
+      } finally {
+        setFontsLoaded(true);
+      }
+    }
+    loadResources();
+  }, []);
+
+  // TU EFECTO DE AUTENTICACIÓN
   useEffect(() => {
     if (profile?.id) {
       console.log("Usuario autenticado:", profile.full_name);
-      // registerForPushNotificationsAsync(profile.id); // Actívalo cuando tengas el helper listo
     }
   }, [profile]);
 
-  if (loading) {
+  // Si está cargando el Auth O las fuentes, mostramos el cargador
+  if (loading || !fontsLoaded) {
     return (
       <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#000' }}>
         <ActivityIndicator size="large" color="#FFD700" />
@@ -62,7 +84,7 @@ export default function AppNavigator() {
   );
 }
 
-// Pantalla para usuarios pendientes (Esta sí puede ir afuera como función independiente)
+// Pantalla para usuarios pendientes
 function PendingScreen({ onSignOut }) {
   return (
     <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#000', padding: 24 }}>
