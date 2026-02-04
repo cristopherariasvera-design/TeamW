@@ -20,16 +20,16 @@
         "backgroundColor": "#ffffff"
       }
     },
-    "web": {
-      "favicon": "./assets/favicon.png",
-      "bundler": "metro",
-      "output": "single",
-      "baseUrl": "/TeamW"
-    },
-    "experiments": {
-      "baseUrl": "/TeamW",
-      "typedRoutes": false
-    },
+"web": {
+  "favicon": "./assets/favicon.png",
+  "bundler": "metro",
+  "output": "single",
+  "baseUrl": "/TeamW"
+},
+"experiments": {
+  "baseUrl": "/TeamW",
+  "typedRoutes": false
+},
     "plugins": [
       "@react-native-community/datetimepicker"
     ]
