@@ -1,6 +1,6 @@
 import React from 'react';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
-import { TouchableOpacity, Text, StyleSheet } from 'react-native';
+import { TouchableOpacity, StyleSheet } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../contexts/AuthContext';
 
@@ -9,9 +9,11 @@ import CoachDashboard from '../screens/coach/CoachDashboard';
 import StudentDetailView from '../screens/coach/StudentDetailView';
 import DayDetailScreen from '../screens/student/DayDetailScreen';
 import PlannerScreen from '../screens/coach/PlannerScreen';
-
+// 1. IMPORTANTE: Importa la nueva pantalla de registro
+import AddStudentScreen from '../screens/coach/AddStudentScreen'; 
 
 const Stack = createNativeStackNavigator();
+
 export default function CoachNavigator() {
   const { signOut } = useAuth();
 
@@ -33,22 +35,35 @@ export default function CoachNavigator() {
         name="CoachDashboard" 
         component={CoachDashboard} 
         options={{ 
-          title: 'Panel Coach', // Título que aparecerá en el centro/izquierda
-          headerShown: true     // Asegúrate de que sea true para ver el botón de salida
+          title: 'Panel Coach',
+          headerShown: true 
         }} 
       />
+
+      {/* 2. AÑADIMOS LA PANTALLA DE REGISTRO */}
+      <Stack.Screen 
+        name="AddStudent" 
+        component={AddStudentScreen} 
+        options={{ 
+          title: 'Registrar Alumno',
+          headerRight: null // Opcional: quitamos el logout de esta pantalla si estorba
+        }} 
+      />
+
       <Stack.Screen 
         name="StudentDetail" 
         component={StudentDetailView} 
         options={({ route }) => ({ 
-          title: route.params.student.full_name || 'Detalle Atleta' 
+          title: route.params.student?.full_name || 'Detalle Atleta' 
         })}
       />
+      
       <Stack.Screen 
         name="DayDetail" 
         component={DayDetailScreen} 
         options={{ title: 'Detalle del Entrenamiento' }}
-        />
+      />
+
       <Stack.Screen 
         name="PlannerScreen" 
         component={PlannerScreen} 

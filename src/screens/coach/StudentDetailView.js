@@ -1,21 +1,33 @@
 import React, { useState, useCallback } from 'react';
-import { View, Text, StyleSheet, FlatList, TouchableOpacity, ActivityIndicator } from 'react-native';
+import { 
+  View, 
+  Text, 
+  StyleSheet, 
+  FlatList, 
+  TouchableOpacity, 
+  ActivityIndicator, 
+  LayoutAnimation, 
+  Platform, 
+  UIManager 
+} from 'react-native';
 import { supabase } from '../../config/supabaseClient';
 import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
 
+// Habilitar animaciones en Android
+if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
+  UIManager.setLayoutAnimationEnabledExperimental(true);
+}
+
 export default function StudentDetailView({ route, navigation }) {
-  // Verificamos que 'student' exista para evitar errores de renderizado
   const { student } = route.params || {};
-  const [plans, setPlans] = useState([]);
+  const [groupedPlans, setGroupedPlans] = useState([]);
+  const [expandedWeeks, setExpandedWeeks] = useState({});
   const [loading, setLoading] = useState(true);
 
-  // Refresca la lista automáticamente cuando vuelves de la pantalla "PlannerScreen"
   useFocusEffect(
     useCallback(() => {
-      if (student?.id) {
-        fetchStudentPlans();
-      }
+      if (student?.id) fetchStudentPlans();
     }, [student?.id])
   );
 
@@ -29,111 +41,205 @@ export default function StudentDetailView({ route, navigation }) {
         .order('date', { ascending: false });
 
       if (error) throw error;
-      setPlans(data || []);
+      formatAndGroupData(data || []);
     } catch (error) {
-      console.error('Error fetching plans:', error.message);
+      console.error('Error:', error.message);
     } finally {
       setLoading(false);
     }
   };
 
-  const getMonthHeader = (dateString) => {
-    const date = new Date(dateString + 'T12:00:00'); // Evita desfase por zona horaria
+  const formatAndGroupData = (data) => {
+    const groups = {};
     const months = ["ENERO", "FEBRERO", "MARZO", "ABRIL", "MAYO", "JUNIO", "JULIO", "AGOSTO", "SEPTIEMBRE", "OCTUBRE", "NOVIEMBRE", "DICIEMBRE"];
-    return `${months[date.getMonth()]} ${date.getFullYear()}`;
+
+    data.forEach(plan => {
+      const date = new Date(plan.date + 'T12:00:00');
+      const monthKey = `${months[date.getMonth()]} ${date.getFullYear()}`;
+      const weekKey = `Semana ${plan.week_number}`;
+
+      if (!groups[monthKey]) groups[monthKey] = {};
+      if (!groups[monthKey][weekKey]) groups[monthKey][weekKey] = [];
+      
+      groups[monthKey][weekKey].push(plan);
+    });
+
+    const formatted = Object.keys(groups).map(month => ({
+      title: month,
+      weeks: Object.keys(groups[month]).map(week => ({
+        title: week,
+        data: groups[month][week].sort((a, b) => new Date(a.date) - new Date(b.date))
+      }))
+    }));
+
+    setGroupedPlans(formatted);
+    
+    // Opcional: Expandir la primera semana automáticamente si hay datos
+    if (formatted.length > 0 && formatted[0].weeks.length > 0) {
+        const firstWeekId = `${formatted[0].title}-${formatted[0].weeks[0].title}`;
+        setExpandedWeeks({ [firstWeekId]: true });
+    }
   };
+
+  const toggleWeek = (weekId) => {
+    LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
+    setExpandedWeeks(prev => ({ ...prev, [weekId]: !prev[weekId] }));
+  };
+
+  const renderSession = (session) => (
+    <TouchableOpacity 
+      key={session.id} 
+      style={styles.sessionCard}
+      onPress={() => navigation.navigate('DayDetail', { plan: session })}
+    >
+      <View style={styles.sessionInfo}>
+        <View style={[styles.statusIndicator, session.is_done && styles.statusDone]} />
+        <View>
+          <Text style={styles.sessionTitle}>{session.day_name || session.title}</Text>
+          <Text style={styles.sessionDate}>
+            {new Date(session.date + 'T12:00:00').toLocaleDateString('es-ES', { weekday: 'long', day: 'numeric' })}
+          </Text>
+        </View>
+      </View>
+      <Ionicons name="chevron-forward" size={18} color="#444" />
+    </TouchableOpacity>
+  );
 
   return (
     <View style={styles.container}>
-      <Text style={styles.headerTitle}>Entrenamientos de {student?.full_name}</Text>
-      
-      {loading && plans.length === 0 ? (
+      {/* HEADER PERSONALIZADO */}
+      <View style={styles.customHeader}>
+        <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
+          <Ionicons name="arrow-back" size={24} color="#FFD700" />
+        </TouchableOpacity>
+        <View>
+          <Text style={styles.headerLabel}>PROGRAMACIÓN DE</Text>
+          <Text style={styles.headerStudentName}>{student?.full_name}</Text>
+        </View>
+      </View>
+
+      {loading ? (
         <ActivityIndicator size="large" color="#FFD700" style={{ marginTop: 50 }} />
       ) : (
         <FlatList
-          data={plans}
-          keyExtractor={(item) => item.id.toString()}
-          contentContainerStyle={{ paddingBottom: 100 }}
-          renderItem={({ item, index }) => {
-            const showHeader = index === 0 || getMonthHeader(item.date) !== getMonthHeader(plans[index - 1].date);
-            
-            return (
-              <View>
-                {showHeader && <Text style={styles.monthHeader}>{getMonthHeader(item.date)}</Text>}
-                <TouchableOpacity 
-                  style={styles.planCard}
-                  onPress={() => navigation.navigate('DayDetail', { plan: item })} 
-                >
-                  <View>
-                    <Text style={styles.planDate}>{item.date}</Text>
-                    <Text style={styles.planTitle}>{item.title}</Text>
+          data={groupedPlans}
+          keyExtractor={(item) => item.title}
+          contentContainerStyle={{ paddingBottom: 120, paddingHorizontal: 20 }}
+          renderItem={({ item: month }) => (
+            <View style={styles.monthSection}>
+              <Text style={styles.monthHeaderText}>{month.title}</Text>
+              
+              {month.weeks.map(week => {
+                const weekId = `${month.title}-${week.title}`;
+                const isExpanded = expandedWeeks[weekId];
+
+                return (
+                  <View key={weekId} style={styles.weekWrapper}>
+                    <TouchableOpacity 
+                      activeOpacity={0.8}
+                      style={[styles.weekBar, isExpanded && styles.weekBarActive]} 
+                      onPress={() => toggleWeek(weekId)}
+                    >
+                      <View style={styles.weekRow}>
+                        <MaterialCommunityIcons 
+                          name="layers-triple-outline" 
+                          size={20} 
+                          color={isExpanded ? "#000" : "#FFD700"} 
+                        />
+                        <Text style={[styles.weekTitleText, isExpanded && styles.weekTitleActive]}>
+                          {week.title}
+                        </Text>
+                      </View>
+                      <Ionicons 
+                        name={isExpanded ? "chevron-up" : "chevron-down"} 
+                        size={20} 
+                        color={isExpanded ? "#000" : "#666"} 
+                      />
+                    </TouchableOpacity>
+
+                    {isExpanded && (
+                      <View style={styles.sessionsContainer}>
+                        {week.data.map(renderSession)}
+                      </View>
+                    )}
                   </View>
-                  <View style={styles.statusContainer}>
-                    <Ionicons name="chatbubble-ellipses" size={24} color="#FFD700" />
-                  </View>
-                </TouchableOpacity>
-              </View>
-            );
-          }}
+                );
+              })}
+            </View>
+          )}
           ListEmptyComponent={
-            <Text style={styles.emptyText}>Este alumno no tiene planes asignados aún.</Text>
+            <View style={styles.emptyState}>
+              <MaterialCommunityIcons name="calendar-search" size={60} color="#222" />
+              <Text style={styles.emptyText}>No hay planes programados aún.</Text>
+            </View>
           }
         />
       )}
 
-      {/* BOTÓN FLOTANTE CORREGIDO */}
+      {/* FAB - BOTÓN DE ACCIÓN PRINCIPAL */}
       <TouchableOpacity 
-        style={styles.fab} 
-        activeOpacity={0.7}
-        onPress={() => {
-            // Asegúrate que el nombre 'PlannerScreen' esté registrado en tu Navigator
-            navigation.navigate('PlannerScreen', { 
-              studentId: student.id, 
-              studentName: student.full_name 
-            });
-        }}
+        style={styles.mainFab} 
+        onPress={() => navigation.navigate('PlannerScreen', { 
+          studentId: student.id, 
+          studentName: student.full_name 
+        })}
       >
-        <MaterialCommunityIcons name="plus" size={28} color="#000" />
-        <Text style={styles.fabText}>Planificar</Text>
+        <Ionicons name="add-circle" size={24} color="#000" />
+        <Text style={styles.mainFabText}>NUEVO PLAN MENSUAL</Text>
       </TouchableOpacity>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#000', padding: 16 },
-  headerTitle: { color: '#fff', fontSize: 20, fontWeight: 'bold', marginBottom: 20, marginTop: 40 },
-  monthHeader: { color: '#FFD700', fontSize: 16, fontWeight: 'bold', marginTop: 20, marginBottom: 10, letterSpacing: 1 },
-  planCard: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-    backgroundColor: '#1a1a1a',
-    padding: 18,
-    borderRadius: 12,
-    marginBottom: 10,
+  container: { flex: 1, backgroundColor: '#000' },
+  
+  // Header
+  customHeader: { flexDirection: 'row', alignItems: 'center', paddingTop: 60, paddingHorizontal: 20, marginBottom: 20 },
+  backBtn: { backgroundColor: '#111', padding: 10, borderRadius: 12, marginRight: 15 },
+  headerLabel: { color: '#FFD700', fontSize: 10, fontWeight: '900', letterSpacing: 1 },
+  headerStudentName: { color: '#fff', fontSize: 22, fontWeight: 'bold' },
+
+  // Secciones
+  monthSection: { marginBottom: 30 },
+  monthHeaderText: { color: '#FFD700', fontSize: 14, fontWeight: 'bold', letterSpacing: 2, marginBottom: 15, textTransform: 'uppercase' },
+  
+  weekWrapper: { marginBottom: 10, borderRadius: 16, overflow: 'hidden', backgroundColor: '#0A0A0A' },
+  weekBar: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', padding: 20, backgroundColor: '#111' },
+  weekBarActive: { backgroundColor: '#FFD700' },
+  weekRow: { flexDirection: 'row', alignItems: 'center' },
+  weekTitleText: { color: '#fff', fontSize: 16, fontWeight: 'bold', marginLeft: 12 },
+  weekTitleActive: { color: '#000' },
+
+  // Sesiones
+  sessionsContainer: { padding: 10, backgroundColor: '#050505' },
+  sessionCard: { 
+    flexDirection: 'row', 
+    justifyContent: 'space-between', 
+    alignItems: 'center', 
+    backgroundColor: '#111', 
+    padding: 16, 
+    borderRadius: 12, 
+    marginBottom: 8,
     borderWidth: 1,
-    borderColor: '#333'
+    borderColor: '#1a1a1a'
   },
-  planDate: { color: '#FFD700', fontSize: 11, marginBottom: 4 },
-  planTitle: { color: '#fff', fontSize: 16, fontWeight: 'bold' },
-  statusContainer: { flexDirection: 'row', alignItems: 'center' },
-  emptyText: { color: '#666', textAlign: 'center', marginTop: 40 },
-  fab: {
-    position: 'absolute',
-    bottom: 30,
-    right: 20,
-    backgroundColor: '#FFD700',
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingVertical: 15,
-    paddingHorizontal: 25,
-    borderRadius: 35,
-    elevation: 10,
-    shadowColor: '#000',
-    shadowOffset: { width: 0, height: 5 },
-    shadowOpacity: 0.5,
-    shadowRadius: 5,
+  sessionInfo: { flexDirection: 'row', alignItems: 'center' },
+  statusIndicator: { width: 4, height: 25, borderRadius: 2, backgroundColor: '#333', marginRight: 15 },
+  statusDone: { backgroundColor: '#FFD700' },
+  sessionTitle: { color: '#fff', fontSize: 15, fontWeight: 'bold' },
+  sessionDate: { color: '#666', fontSize: 12, marginTop: 2, textTransform: 'capitalize' },
+
+  // Empty State
+  emptyState: { alignItems: 'center', marginTop: 80, opacity: 0.5 },
+  emptyText: { color: '#fff', marginTop: 15, fontSize: 14 },
+
+  // Floating Action Button
+  mainFab: {
+    position: 'absolute', bottom: 35, left: 20, right: 20,
+    backgroundColor: '#FFD700', flexDirection: 'row', justifyContent: 'center',
+    alignItems: 'center', paddingVertical: 20, borderRadius: 20,
+    shadowColor: '#FFD700', shadowOffset: { width: 0, height: 10 }, shadowOpacity: 0.4, shadowRadius: 10, elevation: 8
   },
-  fabText: { color: '#000', fontWeight: 'bold', marginLeft: 10, fontSize: 16 }
+  mainFabText: { color: '#000', fontWeight: '900', marginLeft: 10, fontSize: 14, letterSpacing: 1 }
 });

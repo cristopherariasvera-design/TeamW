@@ -1,5 +1,16 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, TextInput, ScrollView, TouchableOpacity, StyleSheet, Alert, ActivityIndicator } from 'react-native';
+import { 
+  View, 
+  Text, 
+  TextInput, 
+  ScrollView, 
+  TouchableOpacity, 
+  StyleSheet, 
+  Alert, 
+  ActivityIndicator, 
+  KeyboardAvoidingView, 
+  Platform 
+} from 'react-native';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { supabase } from '../../config/supabaseClient';
 
@@ -7,209 +18,200 @@ export default function PlannerScreen({ route, navigation }) {
   const { studentId, studentName } = route.params || {};
   
   const [loading, setLoading] = useState(false);
-  const [step, setStep] = useState(1); 
-  const [weekNumber, setWeekNumber] = useState('1');
-  
-  // CONFIGURACIÓN DE PLAN
+  const [startWeekNumber, setStartWeekNumber] = useState(1); 
+  // Usamos un string para la fecha para máxima compatibilidad web/móvil
   const [startDate, setStartDate] = useState(new Date().toISOString().split('T')[0]);
-  const [endDate, setEndDate] = useState('');
-  const [numSessions, setNumSessions] = useState('5'); // Por defecto 5 sesiones
+  const [numSessions, setNumSessions] = useState(3); 
 
-  const [selectedDayIndex, setSelectedDayIndex] = useState(0);
-  const [weekPlan, setWeekPlan] = useState({});
-
-  const startPlanning = () => {
-    const sessionsCount = parseInt(numSessions);
-    
-    if (isNaN(sessionsCount) || sessionsCount < 1) {
-      Alert.alert("Error", "Ingresa una cantidad válida de sesiones.");
-      return;
-    }
-    if (!endDate) {
-      Alert.alert("Error", "Selecciona una fecha de fin para el periodo.");
-      return;
-    }
-
-    let initialPlan = {};
-    for (let i = 1; i <= sessionsCount; i++) {
-      const currentLabel = `Sesión ${i}`;
-      initialPlan[currentLabel] = [{ id: Math.random(), title: 'A) SECCIÓN', content: '' }];
-    }
-    setWeekPlan(initialPlan);
-    setStep(2);
+  const adjustValue = (setter, val, min = 1) => {
+    setter(prev => Math.max(min, prev + val));
   };
 
-  const daysKeys = Object.keys(weekPlan);
-  const currentDayKey = daysKeys[selectedDayIndex];
+  const handleSaveMonth = async () => {
+    setLoading(true);
+    try {
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) throw new Error("Sesión de Coach no encontrada");
 
-  const addBlock = () => {
-    const currentBlocks = weekPlan[currentDayKey];
-    const nextLetter = String.fromCharCode(65 + currentBlocks.length);
-    const newBlock = { id: Math.random(), title: `${nextLetter}) SECCIÓN`, content: '' };
-    setWeekPlan({ ...weekPlan, [currentDayKey]: [...currentBlocks, newBlock] });
-  };
+      const allEntries = [];
+      const baseDate = new Date(startDate);
 
-  const updateBlock = (id, field, value) => {
-    const updatedBlocks = weekPlan[currentDayKey].map(b => b.id === id ? { ...b, [field]: value } : b);
-    setWeekPlan({ ...weekPlan, [currentDayKey]: updatedBlocks });
-  };
-
-const handleSave = async () => {
-  setLoading(true);
-  try {
-    const entries = daysKeys.map((dayLabel, index) => {
-      const dayBlocks = weekPlan[dayLabel].filter(b => b.content.trim() !== '');
-      if (dayBlocks.length === 0) return null;
-
-      // Convertimos el formato para que coincida con la columna 'sections' de tu DB
-const sectionsFormat = dayBlocks.map(b => ({
-  name: b.title,
-  content: b.content
-}));
-const planDate = new Date(startDate);
-return {
-student_id: studentId,
-//   coach_id: coachId, // ¡Asegúrate de obtener esto del AuthContext!
-  month: planDate.getMonth() + 1, // Esto genera el '2' para febrero
-  year: planDate.getFullYear(),   // Esto genera el '2026'
-  date: startDate,
-  day_name: dayLabel,
-  title: `Semana ${weekNumber} - ${dayLabel}`,
-  date: startDate,
-  end_date: endDate,
-  sections: sectionsFormat, // QUITAMOS el JSON.stringify
-  blocks: dayBlocks,
-  week_number: parseInt(weekNumber),
-  is_done: false
-};
-    }).filter(Boolean);
-
-    if (entries.length === 0) throw new Error("No hay contenido para guardar.");
-
-    const { error } = await supabase.from('plans').insert(entries);
-    if (error) throw error;
-
-    Alert.alert("Éxito", "Planificación guardada.");
-    navigation.goBack();
-  } catch (e) {
-    console.error("Error al guardar:", e);
-    Alert.alert("Error", e.message);
-  } finally {
-    setLoading(false);
-  }
-};
-
-  if (step === 1) {
-    return (
-      <View style={styles.setupContainer}>
-        <Text style={styles.headerTitle}>Configurar Planificación</Text>
-        <Text style={styles.subTitle}>Alumno: {studentName}</Text>
+      for (let w = 0; w < 4; w++) {
+        const currentWeekNum = startWeekNumber + w;
+        const weekDate = new Date(baseDate);
+        weekDate.setDate(baseDate.getDate() + (w * 7));
         
-        <View style={styles.card}>
-          <Text style={styles.label}>Semana #</Text>
-          <TextInput style={styles.bigInput} value={weekNumber} onChangeText={setWeekNumber} keyboardType="numeric" />
+        for (let s = 1; s <= numSessions; s++) {
+          allEntries.push({
+            student_id: studentId,
+            coach_id: user.id,
+            month: weekDate.getUTCMonth() + 1,
+            year: weekDate.getUTCFullYear(),
+            date: weekDate.toISOString().split('T')[0],
+            day_name: `Sesión ${s}`,
+            title: `Semana ${currentWeekNum} - Sesión ${s}`,
+            sections: [],
+            blocks: [],
+            week_number: currentWeekNum,
+            is_done: false
+          });
+        }
+      }
 
-          <View style={styles.row}>
-            <View style={{ flex: 1 }}>
-              <Text style={styles.label}>Fecha Inicio</Text>
-              <input type="date" value={startDate} onChange={(e) => setStartDate(e.target.value)} style={webInputStyle} />
-            </View>
-            <View style={{ flex: 1, marginLeft: 10 }}>
-              <Text style={styles.label}>Fecha Fin</Text>
-              <input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} style={webInputStyle} />
-            </View>
-          </View>
+      const { error } = await supabase.from('plans').insert(allEntries);
+      if (error) throw error;
 
-          <Text style={styles.label}>Cantidad de Sesiones (Días de entreno)</Text>
-          <TextInput 
-            style={styles.bigInput} 
-            value={numSessions} 
-            onChangeText={setNumSessions} 
-            keyboardType="numeric" 
-            placeholder="Ej: 3"
-          />
-
-          <TouchableOpacity style={styles.primaryBtn} onPress={startPlanning}>
-            <Text style={styles.primaryBtnText}>Comenzar a Planificar</Text>
-          </TouchableOpacity>
-        </View>
-      </View>
-    );
-  }
+      Alert.alert("¡Plan Generado!", `Se han creado ${allEntries.length} sesiones para ${studentName}.`);
+      navigation.goBack();
+    } catch (e) {
+      Alert.alert("Error", e.message);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   return (
-    <View style={styles.container}>
-      <View style={styles.headerRow}>
-        <TouchableOpacity onPress={() => setStep(1)}>
-          <MaterialCommunityIcons name="arrow-left" size={24} color="#FFD700" />
-        </TouchableOpacity>
-        <Text style={styles.headerTitleSmall}>Semana {weekNumber} - {numSessions} Sesiones</Text>
-      </View>
-
-      <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.dayNav}>
-        {daysKeys.map((day, index) => (
-          <TouchableOpacity 
-            key={day} 
-            onPress={() => setSelectedDayIndex(index)}
-            style={[styles.dayTab, selectedDayIndex === index && styles.activeTab]}
-          >
-            <Text style={[styles.dayTabText, selectedDayIndex === index && styles.activeTabText]}>{day}</Text>
+    <KeyboardAvoidingView 
+      behavior={Platform.OS === "ios" ? "padding" : "height"} 
+      style={styles.container}
+    >
+      <ScrollView contentContainerStyle={styles.scrollInside} showsVerticalScrollIndicator={false}>
+        <View style={styles.header}>
+          <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
+            <MaterialCommunityIcons name="arrow-left" size={24} color="#FFD700" />
           </TouchableOpacity>
-        ))}
-      </ScrollView>
-
-      <ScrollView style={{ flex: 1 }}>
-        <View style={styles.dayHeader}>
-          <Text style={styles.dayTitle}>{currentDayKey}</Text>
-          <TouchableOpacity onPress={addBlock} style={styles.addBtn}>
-            <Text style={styles.addBtnText}>+ BLOQUE</Text>
-          </TouchableOpacity>
+          <Text style={styles.headerTitle}>Planificación</Text>
+          <Text style={styles.subTitle}>Configurando mes para {studentName}</Text>
         </View>
 
-        {weekPlan[currentDayKey].map((block) => (
-          <View key={block.id} style={styles.blockCard}>
-            <TextInput style={styles.blockTitle} value={block.title} onChangeText={(t) => updateBlock(block.id, 'title', t)} />
-            <TextInput multiline placeholder="Escribe aquí..." placeholderTextColor="#555" style={styles.textArea} value={block.content} onChangeText={(t) => updateBlock(block.id, 'content', t)} />
+        <View style={styles.card}>
+          
+          {/* STEPPER SEMANA INICIAL */}
+          <Text style={styles.label}>Semana de inicio</Text>
+          <View style={styles.stepperContainer}>
+            <TouchableOpacity onPress={() => adjustValue(setStartWeekNumber, -1)} style={styles.stepBtn}>
+              <MaterialCommunityIcons name="minus" size={24} color="#000" />
+            </TouchableOpacity>
+            <View style={styles.stepValueDisplay}>
+              <Text style={styles.stepValueText}>Semana {startWeekNumber}</Text>
+              <Text style={styles.stepValueSub}>Hasta semana {startWeekNumber + 3}</Text>
+            </View>
+            <TouchableOpacity onPress={() => adjustValue(setStartWeekNumber, 1)} style={styles.stepBtn}>
+              <MaterialCommunityIcons name="plus" size={24} color="#000" />
+            </TouchableOpacity>
           </View>
-        ))}
 
-        <TouchableOpacity style={styles.saveBtn} onPress={handleSave} disabled={loading}>
-          {loading ? <ActivityIndicator color="#000" /> : <Text style={styles.saveBtnText}>GUARDAR PLAN</Text>}
-        </TouchableOpacity>
+          {/* CHIPS SESIONES POR SEMANA */}
+          <Text style={styles.label}>Sesiones semanales</Text>
+          <View style={styles.sessionsRow}>
+            {[2, 3, 4, 5, 6].map((num) => (
+              <TouchableOpacity 
+                key={num} 
+                style={[styles.sessionChip, numSessions === num && styles.sessionChipActive]}
+                onPress={() => setNumSessions(num)}
+              >
+                <Text style={[styles.sessionChipText, numSessions === num && styles.sessionChipTextActive]}>{num}</Text>
+              </TouchableOpacity>
+            ))}
+          </View>
+
+          {/* INPUT DE FECHA UNIVERSAL */}
+          <Text style={styles.label}>Fecha de inicio (Lunes)</Text>
+          <View style={styles.dateWrapper}>
+            <MaterialCommunityIcons name="calendar" size={20} color="#FFD700" style={{marginRight: 10}} />
+            {Platform.OS === 'web' ? (
+              <input 
+                type="date" 
+                value={startDate} 
+                onChange={(e) => setStartDate(e.target.value)} 
+                style={webInputStyle} 
+              />
+            ) : (
+              <TextInput 
+                style={styles.mobileDateInput}
+                value={startDate}
+                onChangeText={setStartDate}
+                placeholder="AAAA-MM-DD"
+                placeholderTextColor="#444"
+              />
+            )}
+          </View>
+
+          {/* RESUMEN DE GENERACIÓN */}
+          <View style={styles.summaryBox}>
+            <View style={styles.summaryItem}>
+              <Text style={styles.summaryVal}>{numSessions * 4}</Text>
+              <Text style={styles.summaryLabel}>Total Sesiones</Text>
+            </View>
+            <View style={styles.divider} />
+            <View style={styles.summaryItem}>
+              <MaterialCommunityIcons name="calendar-check" size={20} color="#FFD700" />
+              <Text style={styles.summaryLabel}>Mes Completo</Text>
+            </View>
+          </View>
+
+          <TouchableOpacity 
+            style={[styles.primaryBtn, loading && { opacity: 0.7 }]} 
+            onPress={handleSaveMonth} 
+            disabled={loading}
+          >
+            {loading ? (
+              <ActivityIndicator color="#000" />
+            ) : (
+              <>
+                <Text style={styles.primaryBtnText}>GENERAR CALENDARIO</Text>
+                <MaterialCommunityIcons name="chevron-right" size={20} color="#000" />
+              </>
+            )}
+          </TouchableOpacity>
+        </View>
       </ScrollView>
-    </View>
+    </KeyboardAvoidingView>
   );
 }
 
+// Estilo específico para que el input de HTML no se vea feo en Chrome
 const webInputStyle = {
-  backgroundColor: '#000', color: '#FFD700', padding: '12px', borderRadius: '10px', fontSize: '14px', border: 'none', borderBottom: '2px solid #FFD700', width: '100%', outline: 'none'
+  backgroundColor: 'transparent',
+  color: '#fff',
+  border: 'none',
+  fontSize: '16px',
+  width: '100%',
+  outline: 'none',
+  cursor: 'pointer'
 };
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#000', padding: 15 },
-  setupContainer: { flex: 1, backgroundColor: '#000', justifyContent: 'center', padding: 20 },
-  headerTitle: { color: '#FFD700', fontSize: 24, fontWeight: 'bold', textAlign: 'center' },
-  subTitle: { color: '#666', textAlign: 'center', marginBottom: 20 },
-  card: { backgroundColor: '#111', padding: 20, borderRadius: 15, borderWidth: 1, borderColor: '#222' },
-  label: { color: '#FFD700', fontSize: 12, fontWeight: 'bold', marginBottom: 8, marginTop: 10 },
-  bigInput: { backgroundColor: '#000', color: '#fff', padding: 12, borderRadius: 10, borderBottomWidth: 2, borderBottomColor: '#FFD700' },
-  row: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 10 },
-  primaryBtn: { backgroundColor: '#FFD700', padding: 18, borderRadius: 12, marginTop: 25, alignItems: 'center' },
-  primaryBtnText: { color: '#000', fontWeight: 'bold' },
-  headerRow: { flexDirection: 'row', alignItems: 'center', marginTop: 30, marginBottom: 20 },
-  headerTitleSmall: { color: '#FFD700', fontSize: 18, fontWeight: 'bold', marginLeft: 15 },
-  dayNav: { flexDirection: 'row', marginBottom: 20, maxHeight: 45 },
-  dayTab: { paddingHorizontal: 20, paddingVertical: 10, marginRight: 8, backgroundColor: '#111', borderRadius: 10 },
-  activeTab: { backgroundColor: '#FFD700' },
-  dayTabText: { color: '#fff', fontWeight: 'bold' },
-  activeTabText: { color: '#000' },
-  dayHeader: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 20, alignItems: 'center' },
-  dayTitle: { color: '#fff', fontSize: 22, fontWeight: 'bold' },
-  addBtn: { backgroundColor: '#222', padding: 8, borderRadius: 8, borderWidth: 1, borderColor: '#FFD700' },
-  addBtnText: { color: '#FFD700', fontWeight: 'bold' },
-  blockCard: { backgroundColor: '#0a0a0a', borderRadius: 12, padding: 15, marginBottom: 15, borderWidth: 1, borderColor: '#222' },
-  blockTitle: { color: '#FFD700', fontWeight: 'bold', fontSize: 16, marginBottom: 10 },
-  textArea: { color: '#fff', fontSize: 15, minHeight: 80, textAlignVertical: 'top' },
-  saveBtn: { backgroundColor: '#FFD700', padding: 18, borderRadius: 12, alignItems: 'center', marginTop: 10, marginBottom: 40 },
-  saveBtnText: { color: '#000', fontWeight: 'bold', fontSize: 16 }
+  container: { flex: 1, backgroundColor: '#000' },
+  scrollInside: { padding: 20, paddingTop: 50 },
+  header: { marginBottom: 25 },
+  backBtn: { marginBottom: 10 },
+  headerTitle: { color: '#fff', fontSize: 28, fontWeight: 'bold' },
+  subTitle: { color: '#666', fontSize: 14 },
+  card: { backgroundColor: '#111', padding: 25, borderRadius: 25, borderWidth: 1, borderColor: '#222' },
+  label: { color: '#FFD700', fontSize: 11, fontWeight: 'bold', marginBottom: 15, textTransform: 'uppercase', letterSpacing: 1 },
+  
+  stepperContainer: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: '#000', padding: 10, borderRadius: 20, marginBottom: 25 },
+  stepBtn: { backgroundColor: '#FFD700', width: 45, height: 45, borderRadius: 15, justifyContent: 'center', alignItems: 'center' },
+  stepValueDisplay: { alignItems: 'center' },
+  stepValueText: { color: '#fff', fontSize: 18, fontWeight: 'bold' },
+  stepValueSub: { color: '#444', fontSize: 10 },
+
+  sessionsRow: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 30 },
+  sessionChip: { width: 45, height: 45, borderRadius: 22.5, backgroundColor: '#1a1a1a', justifyContent: 'center', alignItems: 'center', borderWidth: 1, borderColor: '#333' },
+  sessionChipActive: { backgroundColor: '#FFD700', borderColor: '#FFD700' },
+  sessionChipText: { color: '#666', fontWeight: 'bold' },
+  sessionChipTextActive: { color: '#000' },
+
+  dateWrapper: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#000', padding: 15, borderRadius: 15, borderWidth: 1, borderColor: '#222', marginBottom: 25 },
+  mobileDateInput: { color: '#fff', flex: 1, fontSize: 16 },
+
+  summaryBox: { flexDirection: 'row', backgroundColor: '#1a1a1a', borderRadius: 20, padding: 20, marginBottom: 20, alignItems: 'center' },
+  summaryItem: { flex: 1, alignItems: 'center' },
+  summaryVal: { color: '#FFD700', fontSize: 24, fontWeight: '900' },
+  summaryLabel: { color: '#555', fontSize: 10, textTransform: 'uppercase', marginTop: 4 },
+  divider: { width: 1, height: '100%', backgroundColor: '#222' },
+
+  primaryBtn: { backgroundColor: '#FFD700', padding: 20, borderRadius: 18, flexDirection: 'row', justifyContent: 'center', alignItems: 'center' },
+  primaryBtnText: { color: '#000', fontWeight: '900', fontSize: 16, marginRight: 10 }
 });
