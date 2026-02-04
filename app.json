@@ -23,14 +23,14 @@
     "web": {
       "favicon": "./assets/favicon.png",
       "bundler": "metro",
-      "output": "single"
+      "output": "single",
+      "baseUrl": "/TeamW"
     },
     "experiments": {
       "baseUrl": "/TeamW",
       "typedRoutes": false
     },
     "plugins": [
-      "expo-router",
       "@react-native-community/datetimepicker"
     ]
   }
