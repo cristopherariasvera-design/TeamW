@@ -11,9 +11,11 @@ import {
 import { useAuth } from '../../contexts/AuthContext';
 import { supabase } from '../../config/supabaseClient';
 import { Ionicons } from '@expo/vector-icons';
+import { useIsFocused } from '@react-navigation/native'; // <--- IMPORTANTE: Hook para detectar el foco
 
 export default function StudentPlanScreen({ navigation }) {
   const { profile } = useAuth();
+  const isFocused = useIsFocused(); // <--- Detecta si la pantalla está activa
   const [loading, setLoading] = useState(true);
   const [plans, setPlans] = useState([]);
   const [selectedMonth, setSelectedMonth] = useState(new Date().getMonth() + 1);
@@ -24,17 +26,20 @@ export default function StudentPlanScreen({ navigation }) {
     'Julio', 'Agosto', 'Septiembre', 'Octubre', 'Noviembre', 'Diciembre'
   ];
 
+  // Este useEffect se dispara por 3 razones: 
+  // 1. Cambio de mes, 2. Cambio de año, 3. Volver a la pantalla (isFocused)
   useEffect(() => {
-    if (profile?.id) {
+    if (profile?.id && isFocused) {
       loadPlans();
     }
-  }, [selectedMonth, selectedYear, profile?.id]);
+  }, [selectedMonth, selectedYear, profile?.id, isFocused]);
 
   const loadPlans = async () => {
     try {
+      // Solo mostramos el indicador de carga grande la primera vez o al cambiar de mes
+      // Si solo es un refresco por volver atrás, lo hacemos más sutil (opcional)
       setLoading(true);
       
-      // Consultamos los planes del alumno para el mes y año seleccionados
       const { data, error } = await supabase
         .from('plans')
         .select('*')
@@ -45,9 +50,6 @@ export default function StudentPlanScreen({ navigation }) {
 
       if (error) throw error;
 
-      // --- PROCESAMIENTO CRÍTICO DE DATOS ---
-      // Esto asegura que 'sections' siempre sea un Array usable, 
-      // sin importar si en la DB se guardó como texto o como JSON.
       const sanitizedPlans = (data || []).map(plan => {
         let processedSections = [];
         
@@ -82,7 +84,6 @@ export default function StudentPlanScreen({ navigation }) {
   const groupPlansByWeek = () => {
     const weeks = {};
     plans.forEach(plan => {
-      // Si no tiene semana definida, lo mandamos a la 1 por defecto
       const weekNum = plan.week_number || 1;
       if (!weeks[weekNum]) {
         weeks[weekNum] = [];
@@ -117,7 +118,7 @@ export default function StudentPlanScreen({ navigation }) {
 
   const weeks = groupPlansByWeek();
 
-  if (loading) {
+  if (loading && plans.length === 0) {
     return (
       <View style={styles.loadingContainer}>
         <ActivityIndicator size="large" color="#FFD700" />
@@ -128,7 +129,6 @@ export default function StudentPlanScreen({ navigation }) {
 
   return (
     <View style={styles.container}>
-      {/* Selector de mes */}
       <View style={styles.monthSelector}>
         <TouchableOpacity onPress={() => changeMonth(-1)} style={styles.monthButton}>
           <Ionicons name="chevron-back" size={24} color="#FFD700" />
@@ -144,7 +144,6 @@ export default function StudentPlanScreen({ navigation }) {
         </TouchableOpacity>
       </View>
 
-      {/* Lista de semanas */}
       <ScrollView style={styles.content} contentContainerStyle={{ paddingBottom: 30 }}>
         {Object.keys(weeks).length === 0 ? (
           <View style={styles.emptyContainer}>

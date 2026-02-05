@@ -1,23 +1,29 @@
 import React, { useState, useEffect } from 'react';
 import {
   View, Text, StyleSheet, ScrollView, TouchableOpacity,
-  TextInput, Alert, ActivityIndicator, KeyboardAvoidingView, Platform
+  Alert, Platform, Vibration, KeyboardAvoidingView
 } from 'react-native';
+import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import { supabase } from '../../config/supabaseClient';
 import { useAuth } from '../../contexts/AuthContext';
-import { Ionicons, MaterialCommunityIcons } from '@expo/vector-icons';
 import CommentsModal from './CommentsModal';
 
 export default function DayDetailScreen({ route, navigation }) {
   const { plan } = route.params;
   const { profile } = useAuth();
-  const isCoach = profile?.role === 'coach';
-
+  
+  // ESTADOS DEL PLAN
   const [isDone, setIsDone] = useState(plan.is_done);
   const [commentsVisible, setCommentsVisible] = useState(false);
-  const [loading, setLoading] = useState(false);
-  const [isEditing, setIsEditing] = useState(false);
   const [editedSections, setEditedSections] = useState([]);
+
+  // ESTADOS DEL CRONÓMETRO PRO
+  const [isActive, setIsActive] = useState(false);
+  const [timerMode, setTimerMode] = useState('FOR TIME'); 
+  const [seconds, setSeconds] = useState(0);
+  const [targetMinutes, setTargetMinutes] = useState(10); 
+  const [status, setStatus] = useState('READY'); 
+  const [round, setRound] = useState(1);
 
   useEffect(() => {
     let rawSections = plan.sections;
@@ -28,6 +34,7 @@ export default function DayDetailScreen({ route, navigation }) {
     setEditedSections(Array.isArray(rawSections) ? rawSections : []);
   }, [plan]);
 
+  // Lógica de formateo de fecha (Restaurado)
   const formatDate = (dateString) => {
     if (!dateString) return "";
     const date = new Date(dateString + 'T12:00:00');
@@ -36,37 +43,79 @@ export default function DayDetailScreen({ route, navigation }) {
     }).toUpperCase();
   };
 
-  const addSection = () => {
-    const nextLetter = String.fromCharCode(65 + editedSections.length);
-    setEditedSections([...editedSections, { name: `${nextLetter}) SECCIÓN`, content: '' }]);
-  };
-
-  const updateSection = (index, field, value) => {
-    const updated = [...editedSections];
-    updated[index][field] = value;
-    setEditedSections(updated);
-  };
-
-  const removeSection = (index) => {
-    setEditedSections(editedSections.filter((_, i) => i !== index));
-  };
-
-  const saveChanges = async () => {
-    setLoading(true);
-    try {
-      const { error } = await supabase
-        .from('plans')
-        .update({ sections: editedSections, blocks: editedSections })
-        .eq('id', plan.id);
-
-      if (error) throw error;
-      Alert.alert("¡Listo!", "Entrenamiento actualizado.");
-      setIsEditing(false);
-    } catch (error) {
-      Alert.alert("Error", "No se pudo guardar.");
-    } finally {
-      setLoading(false);
+  // Lógica principal del Timer
+  useEffect(() => {
+    let interval = null;
+    if (isActive) {
+      interval = setInterval(() => {
+        handleTimerTick();
+      }, 1000);
+    } else {
+      clearInterval(interval);
     }
+    return () => clearInterval(interval);
+  }, [isActive, seconds, status, timerMode]);
+
+  const handleTimerTick = () => {
+    if (timerMode === 'FOR TIME') {
+      setSeconds(s => s + 1);
+    } 
+    else if (timerMode === 'AMRAP') {
+      if (seconds > 0) setSeconds(s => s - 1);
+      else {
+        setIsActive(false);
+        Alert.alert("¡Tiempo!", "AMRAP Finalizado");
+      }
+    } 
+    else if (timerMode === 'EMOM') {
+      if (seconds < 59) setSeconds(s => s + 1);
+      else {
+        setSeconds(0);
+        setRound(r => r + 1);
+        vibrateDevice();
+      }
+    } 
+    else if (timerMode === 'TABATA') {
+      if (status === 'WORK') {
+        if (seconds < 19) setSeconds(s => s + 1);
+        else {
+          setStatus('REST');
+          setSeconds(0);
+          vibrateDevice();
+        }
+      } else {
+        if (seconds < 9) setSeconds(s => s + 1);
+        else {
+          setStatus('WORK');
+          setSeconds(0);
+          setRound(r => r + 1);
+          vibrateDevice();
+        }
+      }
+    }
+  };
+
+  const vibrateDevice = () => {
+    if (Platform.OS !== 'web') Vibration.vibrate(500);
+  };
+
+  const startTimer = () => {
+    if (timerMode === 'AMRAP') setSeconds(targetMinutes * 60);
+    if (timerMode === 'TABATA') setStatus('WORK');
+    setIsActive(true);
+  };
+
+  const resetTimer = () => {
+    setIsActive(false);
+    setSeconds(0);
+    setRound(1);
+    setStatus('READY');
+  };
+
+  const formatTime = (secs) => {
+    const mins = Math.floor(secs / 60);
+    const s = secs % 60;
+    return `${mins < 10 ? '0' : ''}${mins}:${s < 10 ? '0' : ''}${s}`;
   };
 
   const toggleDone = async () => {
@@ -80,12 +129,17 @@ export default function DayDetailScreen({ route, navigation }) {
     }
   };
 
+  const getTimerColor = () => {
+    if (!isActive) return '#fff';
+    if (timerMode === 'TABATA' && status === 'REST') return '#FF4444';
+    if (timerMode === 'TABATA' && status === 'WORK') return '#4CAF50';
+    return '#FFD700';
+  };
+
   return (
-    <KeyboardAvoidingView 
-      style={styles.container} 
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-    >
-      {/* HEADER PREMIUM */}
+    <KeyboardAvoidingView style={styles.container} behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
+      
+      {/* --- HEADER RESTAURADO --- */}
       <View style={styles.header}>
         <TouchableOpacity onPress={() => navigation.goBack()} style={styles.iconCircle}>
           <Ionicons name="chevron-back" size={24} color="#fff" />
@@ -96,97 +150,74 @@ export default function DayDetailScreen({ route, navigation }) {
           <Text style={styles.headerTitle}>{plan.title || 'Entrenamiento'}</Text>
         </View>
 
-        {isCoach ? (
-          <TouchableOpacity 
-            style={[styles.iconCircle, isEditing && styles.saveIconActive]} 
-            onPress={() => isEditing ? saveChanges() : setIsEditing(true)}
-          >
-            <Ionicons name={isEditing ? "checkmark" : "pencil"} size={22} color={isEditing ? "#000" : "#FFD700"} />
-          </TouchableOpacity>
-        ) : (
-          <TouchableOpacity onPress={toggleDone} style={styles.iconCircle}>
-            <Ionicons name={isDone ? "checkmark-circle" : "ellipse-outline"} size={28} color={isDone ? "#FFD700" : "#444"} />
-          </TouchableOpacity>
-        )}
+        <TouchableOpacity onPress={toggleDone} style={styles.iconCircle}>
+          <Ionicons name={isDone ? "checkmark-circle" : "ellipse-outline"} size={28} color={isDone ? "#FFD700" : "#444"} />
+        </TouchableOpacity>
       </View>
 
-      <ScrollView style={styles.content} contentContainerStyle={{ paddingBottom: 100 }}>
-        {isEditing ? (
-          /* MODO EDICIÓN */
-          <View style={styles.editWrapper}>
-            <Text style={styles.editInfoText}>Estás editando la sesión del alumno</Text>
-            {editedSections.map((section, index) => (
-              <View key={index} style={styles.editCard}>
-                <View style={styles.editCardHeader}>
-                  <TextInput
-                    style={styles.inputTitle}
-                    value={section.name}
-                    onChangeText={(t) => updateSection(index, 'name', t)}
-                    placeholder="Nombre del bloque..."
-                    placeholderTextColor="#555"
-                  />
-                  <TouchableOpacity onPress={() => removeSection(index)}>
-                    <Ionicons name="close-circle" size={22} color="#ff4444" />
-                  </TouchableOpacity>
-                </View>
-                <TextInput
-                  style={styles.inputContent}
-                  multiline
-                  placeholder="Instrucciones, series, reps..."
-                  placeholderTextColor="#444"
-                  value={section.content}
-                  onChangeText={(t) => updateSection(index, 'content', t)}
-                />
-              </View>
+      <ScrollView style={styles.content} contentContainerStyle={{ paddingBottom: 50 }}>
+        
+        {/* TIMER CARD PRO */}
+        <View style={[styles.timerCard, { borderColor: getTimerColor() }]}>
+          <View style={styles.modeSelector}>
+            {['FOR TIME', 'AMRAP', 'EMOM', 'TABATA'].map(m => (
+              <TouchableOpacity key={m} onPress={() => { setTimerMode(m); resetTimer(); }} 
+                style={[styles.modeBtn, timerMode === m && styles.modeBtnActive]}>
+                <Text style={[styles.modeBtnText, timerMode === m && styles.modeBtnTextActive]}>{m}</Text>
+              </TouchableOpacity>
             ))}
-            
-            <TouchableOpacity style={styles.addSectionBtn} onPress={addSection}>
-              <Ionicons name="add" size={20} color="#FFD700" />
-              <Text style={styles.addSectionText}>AÑADIR BLOQUE</Text>
-            </TouchableOpacity>
+          </View>
 
-            <TouchableOpacity style={styles.cancelBtn} onPress={() => setIsEditing(false)}>
-              <Text style={styles.cancelBtnText}>Descartar cambios</Text>
+          {!isActive && (timerMode === 'AMRAP' || timerMode === 'EMOM') && (
+            <View style={styles.configRow}>
+              <TouchableOpacity onPress={() => setTargetMinutes(m => Math.max(1, m - 1))}>
+                <Ionicons name="remove-circle-outline" size={24} color="#FFD700" />
+              </TouchableOpacity>
+              <Text style={styles.configText}>{targetMinutes} MIN</Text>
+              <TouchableOpacity onPress={() => setTargetMinutes(m => m + 1)}>
+                <Ionicons name="add-circle-outline" size={24} color="#FFD700" />
+              </TouchableOpacity>
+            </View>
+          )}
+
+          <Text style={[styles.timerText, { color: getTimerColor() }]}>{formatTime(seconds)}</Text>
+          
+          { (timerMode === 'EMOM' || timerMode === 'TABATA') && (
+            <Text style={styles.roundText}>RONDA {round}</Text>
+          )}
+
+          <View style={styles.timerControls}>
+            <TouchableOpacity style={styles.mainPlayBtn} onPress={() => isActive ? setIsActive(false) : startTimer()}>
+              <Ionicons name={isActive ? "pause" : "play"} size={32} color="#000" />
+            </TouchableOpacity>
+            <TouchableOpacity style={styles.resetBtn} onPress={resetTimer}>
+              <Ionicons name="refresh" size={24} color="#FFD700" />
             </TouchableOpacity>
           </View>
-        ) : (
-          /* MODO VISTA */
-          <View style={styles.viewWrapper}>
-            {editedSections.length > 0 ? (
-              editedSections.map((section, index) => (
-                <View key={index} style={styles.displayCard}>
-                  <View style={styles.sideIndicator} />
-                  <View style={styles.displayContent}>
-                    <Text style={styles.displaySectionName}>{section.name}</Text>
-                    <Text style={styles.displaySectionText}>{section.content}</Text>
-                  </View>
-                </View>
-              ))
-            ) : (
-              <View style={styles.emptyContainer}>
-                <MaterialCommunityIcons name="dumbbell" size={50} color="#1a1a1a" />
-                <Text style={styles.emptyText}>Sin programación asignada</Text>
-              </View>
-            )}
+        </View>
 
-            <TouchableOpacity style={styles.commentsButton} onPress={() => setCommentsVisible(true)}>
-              <View style={styles.commentIconBg}>
-                <Ionicons name="chatbubbles" size={18} color="#000" />
+        {/* CONTENIDO DEL PLAN */}
+        <View style={styles.planContent}>
+          {editedSections.map((section, index) => (
+            <View key={index} style={styles.sectionCard}>
+              <View style={styles.sideIndicator} />
+              <View style={styles.sectionTextContent}>
+                <Text style={styles.sectionTitle}>{section.name}</Text>
+                <Text style={styles.sectionBody}>{section.content}</Text>
               </View>
-              <Text style={styles.commentsButtonText}>Feedback del entrenamiento</Text>
-              <Ionicons name="chevron-forward" size={18} color="#333" />
-            </TouchableOpacity>
-          </View>
-        )}
+            </View>
+          ))}
+
+          <TouchableOpacity style={styles.commentsButton} onPress={() => setCommentsVisible(true)}>
+            <View style={styles.commentIconBg}>
+              <Ionicons name="chatbubbles" size={18} color="#000" />
+            </View>
+            <Text style={styles.commentsButtonText}>Feedback del entrenamiento</Text>
+            <Ionicons name="chevron-forward" size={18} color="#333" />
+          </TouchableOpacity>
+        </View>
+
       </ScrollView>
-
-      {/* BOTÓN FLOTANTE DE GUARDADO (SOLO EN EDICIÓN) */}
-      {isEditing && (
-        <TouchableOpacity style={styles.floatingSaveBtn} onPress={saveChanges} disabled={loading}>
-          {loading ? <ActivityIndicator color="#000" /> : <Text style={styles.floatingSaveText}>GUARDAR CAMBIOS</Text>}
-        </TouchableOpacity>
-      )}
-
       <CommentsModal visible={commentsVisible} onClose={() => setCommentsVisible(false)} planId={plan.id} />
     </KeyboardAvoidingView>
   );
@@ -212,59 +243,40 @@ const styles = StyleSheet.create({
     borderWidth: 1,
     borderColor: '#222'
   },
-  saveIconActive: { backgroundColor: '#FFD700', borderColor: '#FFD700' },
   headerCenter: { flex: 1, alignItems: 'center' },
   headerDate: { fontSize: 10, color: '#FFD700', fontWeight: '900', letterSpacing: 1 },
   headerTitle: { fontSize: 18, fontWeight: 'bold', color: '#fff', marginTop: 2 },
   
   content: { flex: 1 },
-  viewWrapper: { padding: 20 },
+  timerCard: { 
+    margin: 20, padding: 20, backgroundColor: '#0A0A0A', borderRadius: 30, 
+    borderWidth: 2, alignItems: 'center' 
+  },
+  modeSelector: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 20, width: '100%' },
+  modeBtn: { padding: 8, borderRadius: 10, backgroundColor: '#111', flex: 1, marginHorizontal: 2, alignItems: 'center' },
+  modeBtnActive: { backgroundColor: '#FFD700' },
+  modeBtnText: { color: '#555', fontSize: 10, fontWeight: 'bold' },
+  modeBtnTextActive: { color: '#000' },
   
-  // Vista Alumno
-  displayCard: {
-    flexDirection: 'row',
-    backgroundColor: '#0A0A0A',
-    borderRadius: 15,
-    marginBottom: 15,
-    overflow: 'hidden',
-    borderWidth: 1,
-    borderColor: '#111'
+  configRow: { flexDirection: 'row', alignItems: 'center', marginBottom: 10 },
+  configText: { color: '#fff', marginHorizontal: 15, fontWeight: 'bold' },
+
+  timerText: { fontSize: 72, fontWeight: '900', fontFamily: Platform.OS === 'ios' ? 'Courier' : 'monospace' },
+  roundText: { color: '#666', fontSize: 14, fontWeight: 'bold', marginTop: -10, marginBottom: 10 },
+  
+  timerControls: { flexDirection: 'row', alignItems: 'center', marginTop: 15 },
+  mainPlayBtn: { backgroundColor: '#FFD700', width: 65, height: 65, borderRadius: 35, justifyContent: 'center', alignItems: 'center', marginRight: 20 },
+  resetBtn: { backgroundColor: '#1a1a1a', width: 45, height: 45, borderRadius: 25, justifyContent: 'center', alignItems: 'center', borderWidth: 1, borderColor: '#333' },
+
+  planContent: { padding: 20 },
+  sectionCard: { 
+    flexDirection: 'row', backgroundColor: '#0A0A0A', borderRadius: 15, 
+    marginBottom: 15, overflow: 'hidden', borderWidth: 1, borderColor: '#111' 
   },
   sideIndicator: { width: 4, backgroundColor: '#FFD700' },
-  displayContent: { padding: 20, flex: 1 },
-  displaySectionName: { color: '#FFD700', fontWeight: 'bold', fontSize: 14, marginBottom: 8, textTransform: 'uppercase' },
-  displaySectionText: { color: '#eee', fontSize: 15, lineHeight: 22 },
-
-  // Modo Edición
-  editWrapper: { padding: 20 },
-  editInfoText: { color: '#444', textAlign: 'center', marginBottom: 20, fontSize: 12, fontWeight: 'bold' },
-  editCard: { backgroundColor: '#111', borderRadius: 15, padding: 15, marginBottom: 15, borderWidth: 1, borderColor: '#222' },
-  editCardHeader: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 10 },
-  inputTitle: { color: '#FFD700', fontWeight: 'bold', fontSize: 16, flex: 1 },
-  inputContent: { color: '#fff', fontSize: 15, minHeight: 80, textAlignVertical: 'top', lineHeight: 20 },
-  
-  addSectionBtn: { 
-    flexDirection: 'row', 
-    alignItems: 'center', 
-    justifyContent: 'center', 
-    padding: 15, 
-    borderRadius: 15, 
-    borderWidth: 1, 
-    borderColor: '#333', 
-    borderStyle: 'dashed',
-    marginTop: 10 
-  },
-  addSectionText: { color: '#FFD700', fontWeight: 'bold', marginLeft: 8, fontSize: 13 },
-  
-  cancelBtn: { marginTop: 20, alignItems: 'center' },
-  cancelBtnText: { color: '#555', fontSize: 13 },
-
-  floatingSaveBtn: {
-    position: 'absolute', bottom: 30, left: 20, right: 20,
-    backgroundColor: '#FFD700', padding: 20, borderRadius: 20,
-    alignItems: 'center', shadowColor: '#FFD700', shadowOpacity: 0.3, shadowRadius: 10, elevation: 10
-  },
-  floatingSaveText: { color: '#000', fontWeight: '900', letterSpacing: 1 },
+  sectionTextContent: { padding: 20, flex: 1 },
+  sectionTitle: { color: '#FFD700', fontWeight: 'bold', fontSize: 14, marginBottom: 8, textTransform: 'uppercase' },
+  sectionBody: { color: '#eee', fontSize: 15, lineHeight: 22 },
 
   commentsButton: {
     flexDirection: 'row', alignItems: 'center', backgroundColor: '#111',
@@ -272,7 +284,4 @@ const styles = StyleSheet.create({
   },
   commentIconBg: { backgroundColor: '#FFD700', padding: 8, borderRadius: 12, marginRight: 12 },
   commentsButtonText: { color: '#fff', flex: 1, fontWeight: '600', fontSize: 14 },
-
-  emptyContainer: { padding: 80, alignItems: 'center' },
-  emptyText: { color: '#222', fontWeight: 'bold', marginTop: 10 }
 });
