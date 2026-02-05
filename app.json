@@ -21,10 +21,9 @@
       }
     },
 "web": {
-  "favicon": "./assets/favicon.png",
   "bundler": "metro",
   "output": "single",
-  "baseUrl": "/TeamW"
+  "baseUrl": "/TeamW" 
 },
 "experiments": {
   "baseUrl": "/TeamW",
