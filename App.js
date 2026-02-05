@@ -7,6 +7,9 @@ import { Ionicons, MaterialCommunityIcons, FontAwesome } from '@expo/vector-icon
 import { View, ActivityIndicator } from 'react-native';
 import * as SplashScreen from 'expo-splash-screen';
 
+import * as Font from 'expo-font';
+import { Ionicons, MaterialCommunityIcons, FontAwesome } from '@expo/vector-icons';
+
 // Mantiene la splash screen visible mientras cargan las fuentes
 SplashScreen.preventAutoHideAsync();
 
