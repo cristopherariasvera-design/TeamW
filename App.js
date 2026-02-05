@@ -1,16 +1,13 @@
 import React, { useCallback, useEffect, useState } from 'react';
+import { View, ActivityIndicator } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
+import * as SplashScreen from 'expo-splash-screen';
+import * as Font from 'expo-font';
+import { Ionicons, MaterialCommunityIcons, FontAwesome } from '@expo/vector-icons';
 import { AuthProvider } from './src/contexts/AuthContext';
 import AppNavigator from './src/navigation/AppNavigator';
-import * as Font from 'expo-font';
-import { Ionicons, MaterialCommunityIcons, FontAwesome } from '@expo/vector-icons';
-import { View, ActivityIndicator } from 'react-native';
-import * as SplashScreen from 'expo-splash-screen';
 
-import * as Font from 'expo-font';
-import { Ionicons, MaterialCommunityIcons, FontAwesome } from '@expo/vector-icons';
-
-// Mantiene la splash screen visible mientras cargan las fuentes
+// Evita que la pantalla de carga se oculte automáticamente
 SplashScreen.preventAutoHideAsync();
 
 export default function App() {
@@ -19,14 +16,14 @@ export default function App() {
   useEffect(() => {
     async function prepare() {
       try {
-        // Carga de fuentes explícita
+        // Carga de fuentes para arreglar los iconos en Web
         await Font.loadAsync({
           ...Ionicons.font,
           ...MaterialCommunityIcons.font,
           ...FontAwesome.font,
         });
       } catch (e) {
-        console.warn(e);
+        console.warn("Error cargando fuentes:", e);
       } finally {
         setAppIsReady(true);
       }
@@ -37,6 +34,7 @@ export default function App() {
 
   const onLayoutRootView = useCallback(async () => {
     if (appIsReady) {
+      // Oculta la pantalla de carga cuando todo está listo
       await SplashScreen.hideAsync();
     }
   }, [appIsReady]);
