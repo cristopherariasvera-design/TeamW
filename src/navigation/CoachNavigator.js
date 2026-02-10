@@ -9,8 +9,8 @@ import CoachDashboard from '../screens/coach/CoachDashboard';
 import StudentDetailView from '../screens/coach/StudentDetailView';
 import DayDetailScreen from '../screens/student/DayDetailScreen';
 import PlannerScreen from '../screens/coach/PlannerScreen';
-// 1. IMPORTANTE: Importa la nueva pantalla de registro
 import AddStudentScreen from '../screens/coach/AddStudentScreen'; 
+import CoachStudentsScreen from '../screens/coach/CoachStudentsScreen';
 
 const Stack = createNativeStackNavigator();
 
@@ -40,14 +40,17 @@ export default function CoachNavigator() {
         }} 
       />
 
-      {/* 2. AÑADIMOS LA PANTALLA DE REGISTRO */}
       <Stack.Screen 
         name="AddStudent" 
         component={AddStudentScreen} 
-        options={{ 
-          title: 'Registrar Alumno',
-          headerRight: null // Opcional: quitamos el logout de esta pantalla si estorba
-        }} 
+        options={{ title: 'Registrar Alumno' }} 
+      />
+
+      {/* ESTA ES LA PANTALLA QUE DABA ERROR */}
+      <Stack.Screen 
+        name="AdminStudents" // Nombre que espera el botón del Dashboard
+        component={CoachStudentsScreen} 
+        options={{ title: 'Gestión de Atletas' }} 
       />
 
       <Stack.Screen 
@@ -69,6 +72,7 @@ export default function CoachNavigator() {
         component={PlannerScreen} 
         options={{ title: 'Cargar Planificación' }} 
       />
+      
     </Stack.Navigator>
   );
 }

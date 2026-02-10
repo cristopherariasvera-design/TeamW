@@ -103,12 +103,7 @@ export default function LoginScreen({ navigation }) {
               )}
             </TouchableOpacity>
 
-            <View style={styles.registerContainer}>
-              <Text style={styles.registerText}>¿No tienes cuenta? </Text>
-              <TouchableOpacity onPress={() => navigation.navigate('Register')}>
-                <Text style={styles.registerLink}>Regístrate</Text>
-              </TouchableOpacity>
-            </View>
+
           </View>
         </View>
       </ScrollView>
@@ -134,8 +129,8 @@ const styles = StyleSheet.create({
     marginBottom: 50,
   },
   logoImage: {
-    width: 180, 
-    height: 180,
+    width: 360, 
+    height: 360,
    backgroundColor: '#000',
   },
   subtitle: {
