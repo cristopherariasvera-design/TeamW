@@ -3,14 +3,14 @@
   "version": "1.0.0",
   "main": "index.js",
   "homepage": "https://cristopherariasvera-design.github.io/TeamW/",
-"scripts": {
-  "start": "expo start",
-  "android": "expo start --android",
-  "ios": "expo start --ios",
-  "web": "expo start --web",
-  "predeploy": "npx expo export --platform web && node copy-fonts.js && echo . > dist/.nojekyll",
-  "deploy": "gh-pages -d dist"
-},
+  "scripts": {
+    "start": "expo start",
+    "android": "expo start --android",
+    "ios": "expo start --ios",
+    "web": "expo start --web",
+    "predeploy": "npx expo export --platform web && node copy-fonts.js && echo . > dist/.nojekyll",
+    "deploy": "gh-pages -d dist"
+  },
   "dependencies": {
     "@expo/vector-icons": "^15.0.3",
     "@react-native-community/datetimepicker": "^8.4.4",
@@ -21,6 +21,8 @@
     "@supabase/supabase-js": "^2.93.3",
     "expo": "~54.0.32",
     "expo-device": "~8.0.10",
+    "expo-file-system": "^19.0.21",
+    "expo-mail-composer": "^15.0.8",
     "expo-notifications": "~0.32.16",
     "expo-router": "~6.0.23",
     "expo-splash-screen": "~31.0.13",
@@ -32,7 +34,8 @@
     "react-native-reanimated": "~4.1.1",
     "react-native-safe-area-context": "~5.6.0",
     "react-native-screens": "~4.16.0",
-    "react-native-web": "^0.21.0"
+    "react-native-web": "^0.21.0",
+    "xlsx": "^0.18.5"
   },
   "private": true,
   "devDependencies": {

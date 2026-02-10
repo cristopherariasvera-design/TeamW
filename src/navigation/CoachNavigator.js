@@ -8,6 +8,7 @@ import { useAuth } from '../contexts/AuthContext';
 import CoachDashboard from '../screens/coach/CoachDashboard';
 import StudentDetailView from '../screens/coach/StudentDetailView';
 import DayDetailScreen from '../screens/student/DayDetailScreen';
+import CoachDayEditor from '../screens/coach/CoachDayEditor';
 import PlannerScreen from '../screens/coach/PlannerScreen';
 import AddStudentScreen from '../screens/coach/AddStudentScreen'; 
 import CoachStudentsScreen from '../screens/coach/CoachStudentsScreen';
@@ -63,7 +64,7 @@ export default function CoachNavigator() {
       
       <Stack.Screen 
         name="DayDetail" 
-        component={DayDetailScreen} 
+        component={CoachDayEditor}
         options={{ title: 'Detalle del Entrenamiento' }}
       />
 

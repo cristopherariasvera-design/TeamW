@@ -19,67 +19,22 @@ export default function PlannerScreen({ route, navigation }) {
   
   const [loading, setLoading] = useState(false);
   const [startWeekNumber, setStartWeekNumber] = useState(1); 
-  
-  // Inicializamos con la fecha de hoy por defecto (para el caso "si no tiene fecha")
+  // Usamos un string para la fecha para máxima compatibilidad web/móvil
   const [startDate, setStartDate] = useState(new Date().toISOString().split('T')[0]);
-  
   const [numSessions, setNumSessions] = useState(3); 
-
-  // --- NUEVA LÓGICA: AUTO-DETECTAR FECHA DE INICIO ---
-  useEffect(() => {
-    const fetchStudentExpiry = async () => {
-      if (!studentId) return;
-      try {
-        const { data, error } = await supabase
-          .from('profiles')
-          .select('plan_end_date')
-          .eq('id', studentId)
-          .single();
-
-        if (error) throw error;
-
-        if (data?.plan_end_date) {
-          // CASO A: El alumno tiene fecha de vencimiento.
-          // La fecha de inicio será: Vencimiento + 1 día.
-          const expiry = new Date(data.plan_end_date);
-          expiry.setDate(expiry.getDate() + 0); // Sumamos 1 día
-          
-          setStartDate(expiry.toISOString().split('T')[0]);
-        } else {
-          // CASO B: No tiene fecha (es nuevo o inactivo).
-          // Se mantiene la fecha actual (hoy) que definimos en el useState inicial.
-        }
-      } catch (err) {
-        console.log("No se pudo obtener la fecha anterior, usando fecha actual.", err);
-      }
-    };
-
-    fetchStudentExpiry();
-  }, [studentId]);
-  // ----------------------------------------------------
 
   const adjustValue = (setter, val, min = 1) => {
     setter(prev => Math.max(min, prev + val));
   };
 
   const handleSaveMonth = async () => {
-    if (!studentId) {
-      Alert.alert("Error", "No se identificó al alumno.");
-      return;
-    }
-
     setLoading(true);
     try {
       const { data: { user } } = await supabase.auth.getUser();
       if (!user) throw new Error("Sesión de Coach no encontrada");
 
-      // 1. Preparar las sesiones del Plan
       const allEntries = [];
-      const baseDate = new Date(startDate); // Usará la fecha que calculamos automáticamente
-
-      // Calculamos la nueva fecha de fin (Fecha de inicio + 30 días)
-      const endDate = new Date(baseDate);
-      endDate.setDate(baseDate.getDate() + 30); 
+      const baseDate = new Date(startDate);
 
       for (let w = 0; w < 4; w++) {
         const currentWeekNum = startWeekNumber + w;
@@ -103,41 +58,13 @@ export default function PlannerScreen({ route, navigation }) {
         }
       }
 
-      // 2. Guardar todo en paralelo
-      const promises = [
-        // A: Insertar sesiones
-        supabase.from('plans').insert(allEntries),
+      const { error } = await supabase.from('plans').insert(allEntries);
+      if (error) throw error;
 
-        // B: Actualizar vencimiento del alumno
-        supabase.from('profiles').update({
-          plan_end_date: endDate.toISOString().split('T')[0],
-          status: 'Active'
-        }).eq('id', studentId),
-
-        // C: Historial
-        supabase.from('plan_history').insert({
-          student_id: studentId,
-          coach_id: user.id,
-          start_date: startDate,
-          end_date: endDate.toISOString().split('T')[0],
-          amount: 0
-        })
-      ];
-
-      const results = await Promise.all(promises);
-      const errors = results.map(r => r.error).filter(e => e !== null);
-      if (errors.length > 0) throw errors[0];
-
-      Alert.alert(
-        "¡Plan Creado!", 
-        `Se ha programado el inicio para el ${baseDate.toLocaleDateString()}.\nNuevo vencimiento: ${endDate.toLocaleDateString()}`
-      );
-      
+      Alert.alert("¡Plan Generado!", `Se han creado ${allEntries.length} sesiones para ${studentName}.`);
       navigation.goBack();
-      
     } catch (e) {
-      console.error(e);
-      Alert.alert("Error", e.message || "Ocurrió un error al guardar.");
+      Alert.alert("Error", e.message);
     } finally {
       setLoading(false);
     }
@@ -188,8 +115,8 @@ export default function PlannerScreen({ route, navigation }) {
             ))}
           </View>
 
-          {/* INPUT DE FECHA */}
-          <Text style={styles.label}>Fecha de inicio</Text>
+          {/* INPUT DE FECHA UNIVERSAL */}
+          <Text style={styles.label}>Fecha de inicio (Lunes)</Text>
           <View style={styles.dateWrapper}>
             <MaterialCommunityIcons name="calendar" size={20} color="#FFD700" style={{marginRight: 10}} />
             {Platform.OS === 'web' ? (
@@ -210,7 +137,7 @@ export default function PlannerScreen({ route, navigation }) {
             )}
           </View>
 
-          {/* RESUMEN */}
+          {/* RESUMEN DE GENERACIÓN */}
           <View style={styles.summaryBox}>
             <View style={styles.summaryItem}>
               <Text style={styles.summaryVal}>{numSessions * 4}</Text>
@@ -218,8 +145,8 @@ export default function PlannerScreen({ route, navigation }) {
             </View>
             <View style={styles.divider} />
             <View style={styles.summaryItem}>
-              <MaterialCommunityIcons name="calendar-arrow-right" size={20} color="#FFD700" />
-              <Text style={styles.summaryLabel}>Vence en 30 días</Text>
+              <MaterialCommunityIcons name="calendar-check" size={20} color="#FFD700" />
+              <Text style={styles.summaryLabel}>Mes Completo</Text>
             </View>
           </View>
 
@@ -232,8 +159,8 @@ export default function PlannerScreen({ route, navigation }) {
               <ActivityIndicator color="#000" />
             ) : (
               <>
-                <Text style={styles.primaryBtnText}>GENERAR Y RENOVAR</Text>
-                <MaterialCommunityIcons name="check-circle-outline" size={20} color="#000" />
+                <Text style={styles.primaryBtnText}>GENERAR CALENDARIO</Text>
+                <MaterialCommunityIcons name="chevron-right" size={20} color="#000" />
               </>
             )}
           </TouchableOpacity>
@@ -243,6 +170,7 @@ export default function PlannerScreen({ route, navigation }) {
   );
 }
 
+// Estilo específico para que el input de HTML no se vea feo en Chrome
 const webInputStyle = {
   backgroundColor: 'transparent',
   color: '#fff',
@@ -285,5 +213,5 @@ const styles = StyleSheet.create({
   divider: { width: 1, height: '100%', backgroundColor: '#222' },
 
   primaryBtn: { backgroundColor: '#FFD700', padding: 20, borderRadius: 18, flexDirection: 'row', justifyContent: 'center', alignItems: 'center' },
-  primaryBtnText: { color: '#000', fontWeight: '900', fontSize: 16, marginRight: 10 } 
+  primaryBtnText: { color: '#000', fontWeight: '900', fontSize: 16, marginRight: 10 }
 });
