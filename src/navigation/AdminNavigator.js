@@ -1,50 +1,44 @@
 import React from 'react';
-import { View, Text, TouchableOpacity, StyleSheet } from 'react-native';
-import { useAuth } from '../contexts/AuthContext';
+import { createStackNavigator } from '@react-navigation/stack';
+
+// IMPORTACIONES CORRECTAS BASADAS EN TU FOTO:
+import AdminDashboard from '../screens/admin/AdminDashboard';
+import CoachManagement from '../screens/admin/CoachManagement';
+import AddCoachScreen from '../screens/admin/AddCoachScreen';
+import StudentManagement from '../screens/admin/StudentManagement';
+
+const Stack = createStackNavigator();
 
 export default function AdminNavigator() {
-  const { signOut, profile } = useAuth();
-
   return (
-    <View style={styles.container}>
-      <Text style={styles.title}>Panel de Administrador</Text>
-      <Text style={styles.subtitle}>Bienvenido, {profile?.full_name}</Text>
-      
-      <TouchableOpacity style={styles.button} onPress={signOut}>
-        <Text style={styles.buttonText}>Cerrar Sesión</Text>
-      </TouchableOpacity>
-    </View>
+    <Stack.Navigator
+      screenOptions={{
+        headerStyle: { backgroundColor: '#000', elevation: 0, shadowOpacity: 0 },
+        headerTintColor: '#FFD700',
+        headerTitleStyle: { fontWeight: 'bold', fontSize: 14 },
+      }}
+    >
+      <Stack.Screen 
+        name="AdminHome" 
+        component={AdminDashboard} 
+        options={{ title: 'TEAM W ADMIN' }}
+      />
+      <Stack.Screen 
+        name="CoachManagement"
+        component={CoachManagement} 
+        options={{ title: 'GESTIÓN DE COACHES' }} 
+      />
+      <Stack.Screen 
+        name="AddCoach" 
+        component={AddCoachScreen} 
+        options={{ title: 'NUEVO COACH' }} 
+      />
+      <Stack.Screen 
+        name="StudentManagement" 
+        component={StudentManagement} 
+        options={{ headerShown: false }} 
+      />
+
+    </Stack.Navigator>
   );
 }
-
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: '#000',
-    padding: 24,
-  },
-  title: {
-    fontSize: 24,
-    fontWeight: 'bold',
-    color: '#fff',
-    marginBottom: 8,
-  },
-  subtitle: {
-    fontSize: 16,
-    color: '#999',
-    marginBottom: 32,
-  },
-  button: {
-    backgroundColor: '#FFD700',
-    paddingHorizontal: 32,
-    paddingVertical: 16,
-    borderRadius: 8,
-  },
-  buttonText: {
-    color: '#000',
-    fontWeight: 'bold',
-    fontSize: 16,
-  },
-});
