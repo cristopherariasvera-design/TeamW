@@ -104,7 +104,7 @@ export default function AdminDashboard({ navigation }) {
           
           <TouchableOpacity 
             style={styles.menuItem}
-            onPress={() => navigation.navigate('CoachStudents')}
+            onPress={() => navigation.navigate('StudentManagement')}
           >
             <View style={styles.iconCircle}>
               <Ionicons name="people-outline" size={24} color="#FFD700" />
@@ -132,7 +132,7 @@ export default function AdminDashboard({ navigation }) {
 
           <TouchableOpacity 
             style={styles.menuItem}
-            onPress={() => navigation.navigate('Planner')}
+            onPress={() => navigation.navigate('PlanMonitor')}
           >
             <View style={styles.iconCircle}>
               <Ionicons name="calendar-outline" size={24} color="#FFD700" />
