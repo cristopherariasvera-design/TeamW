@@ -9,22 +9,25 @@ export const AuthProvider = ({ children }) => {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    // Verificar sesión actual
+    // Verificar sesión actual al arrancar la app
     supabase.auth.getSession().then(({ data: { session } }) => {
-      setUser(session?.user ?? null);
       if (session?.user) {
+        setUser(session.user);
         loadProfile(session.user.id);
       } else {
+        setUser(null);
+        setProfile(null);
         setLoading(false);
       }
     });
 
-    // Escuchar cambios de autenticación
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      setUser(session?.user ?? null);
+    // Escuchar cambios de autenticación (Login, Logout, Recuperación)
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, session) => {
       if (session?.user) {
-        loadProfile(session.user.id);
+        setUser(session.user);
+        await loadProfile(session.user.id);
       } else {
+        setUser(null);
         setProfile(null);
         setLoading(false);
       }
@@ -51,24 +54,17 @@ export const AuthProvider = ({ children }) => {
   };
 
   const signIn = async (email, password) => {
-    const { data, error } = await supabase.auth.signInWithPassword({
-      email,
-      password,
-    });
-    return { data, error };
+    return await supabase.auth.signInWithPassword({ email, password });
   };
 
   const signUp = async (email, password, fullName) => {
-    const { data, error } = await supabase.auth.signUp({
+    return await supabase.auth.signUp({
       email,
       password,
       options: {
-        data: {
-          full_name: fullName,
-        }
+        data: { full_name: fullName }
       }
     });
-    return { data, error };
   };
 
   const signOut = async () => {
@@ -80,10 +76,17 @@ export const AuthProvider = ({ children }) => {
     return { error };
   };
 
-  const resetPassword = async (email) => {
-    const { data, error } = await supabase.auth.resetPasswordForEmail(email);
-    return { data, error };
-  };
+  // MODIFICADO: Agregamos redirectTo para que el link funcione en el móvil
+    const resetPassword = async (email) => {
+      // Si estás en localhost, usa esa URL, si no, usa la de GitHub
+      const redirectUrl = __DEV__ 
+        ? 'http://localhost:8081/' 
+        : 'https://cristopherariasvera-design.github.io/TeamW/';
+
+      return await supabase.auth.resetPasswordForEmail(email, {
+        redirectTo: redirectUrl,
+      });
+    };
 
   const value = {
     user,

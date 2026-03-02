@@ -3,6 +3,7 @@ import { createStackNavigator } from '@react-navigation/stack';
 import { NavigationContainer } from '@react-navigation/native';
 import { useAuth } from '../contexts/AuthContext';
 import { ActivityIndicator, View, Text, TouchableOpacity } from 'react-native';
+import * as Linking from 'expo-linking'; // <--- IMPORTANTE PARA EL LOCALHOST
 
 // --- IMPORTACIONES PARA LOS ICONOS ---
 import * as Font from 'expo-font';
@@ -11,6 +12,8 @@ import { Ionicons, FontAwesome, MaterialIcons, MaterialCommunityIcons } from '@e
 // Auth screens
 import LoginScreen from '../screens/auth/LoginScreen';
 import RegisterScreen from '../screens/auth/RegisterScreen';
+import ForgotPasswordScreen from '../screens/auth/ForgotPasswordScreen';
+import ResetPasswordScreen from '../screens/auth/ResetPasswordScreen'; // <--- ASEGÚRATE DE CREAR ESTE ARCHIVO
 
 // Role-based navigators
 import AdminNavigator from './AdminNavigator';
@@ -19,13 +22,27 @@ import StudentNavigator from './StudentNavigator';
 
 const Stack = createStackNavigator();
 
+// --- CONFIGURACIÓN DE DEEP LINKING ---
+const linking = {
+  prefixes: [
+    'http://localhost:8081', // Para pruebas en navegador local
+    Linking.createURL('/'),  // Para Expo Go (exp://)
+    'https://cristopherariasvera-design.github.io/TeamW', // Para producción
+  ],
+  config: {
+    screens: {
+      // Mapeamos la URL que envía Supabase a la pantalla de la App
+      ResetPassword: 'reset-password', 
+      Login: 'login',
+    },
+  },
+};
+
 export default function AppNavigator() {
   const { user, profile, loading, signOut } = useAuth();
-  
-  // Nuevo estado para las fuentes
   const [fontsLoaded, setFontsLoaded] = useState(false);
 
-  // EFECTO PARA CARGAR FUENTES (ICONOS)
+  // CARGA DE FUENTES
   useEffect(() => {
     async function loadResources() {
       try {
@@ -44,14 +61,6 @@ export default function AppNavigator() {
     loadResources();
   }, []);
 
-  // TU EFECTO DE AUTENTICACIÓN
-  useEffect(() => {
-    if (profile?.id) {
-      console.log("Usuario autenticado:", profile.full_name);
-    }
-  }, [profile]);
-
-  // Si está cargando el Auth O las fuentes, mostramos el cargador
   if (loading || !fontsLoaded) {
     return (
       <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#000' }}>
@@ -61,16 +70,18 @@ export default function AppNavigator() {
   }
 
   return (
-    <NavigationContainer>
+    <NavigationContainer linking={linking}> 
       <Stack.Navigator screenOptions={{ headerShown: false }}>
         {!user ? (
           <>
             <Stack.Screen name="Login" component={LoginScreen} />
             <Stack.Screen name="Register" component={RegisterScreen} />
+            <Stack.Screen name="ForgotPassword" component={ForgotPasswordScreen} />
+            <Stack.Screen name="ResetPassword" component={ResetPasswordScreen} />
           </>
         ) : profile?.status !== 'Active' ? (
           <Stack.Screen name="Pending">
-            {() => <PendingScreen onSignOut={signOut} />}
+            {(props) => <PendingScreen {...props} onSignOut={signOut} />}
           </Stack.Screen>
         ) : profile?.role === 'admin' ? (
           <Stack.Screen name="AdminApp" component={AdminNavigator} />
@@ -84,24 +95,35 @@ export default function AppNavigator() {
   );
 }
 
-// Pantalla para usuarios pendientes
+// Pantalla para usuarios pendientes (Mantenemos tu estilo)
 function PendingScreen({ onSignOut }) {
   return (
     <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#000', padding: 24 }}>
-      <View style={{ width: 80, height: 80, borderRadius: 40, backgroundColor: '#FFD700', justifyContent: 'center', alignItems: 'center', marginBottom: 24 }}>
-        <Text style={{ fontSize: 14, fontWeight: 'bold', color: '#000' }}>TEAM W</Text>
+      <View style={{ 
+        width: 100, height: 100, borderRadius: 50, 
+        backgroundColor: '#111', borderWidth: 2, borderColor: '#FFD700',
+        justifyContent: 'center', alignItems: 'center', marginBottom: 30 
+      }}>
+        <Ionicons name="time-outline" size={50} color="#FFD700" />
       </View>
-      <Text style={{ color: '#fff', fontSize: 20, fontWeight: 'bold', marginBottom: 16, textAlign: 'center' }}>
-        Cuenta Pendiente
+      
+      <Text style={{ color: '#fff', fontSize: 22, fontWeight: 'bold', marginBottom: 12, textAlign: 'center' }}>
+        Acceso en Revisión
       </Text>
-      <Text style={{ color: '#999', fontSize: 16, marginBottom: 32, textAlign: 'center' }}>
-        Tu cuenta está pendiente de activación por el administrador.
+      
+      <Text style={{ color: '#666', fontSize: 16, marginBottom: 40, textAlign: 'center', lineHeight: 22 }}>
+        Tu cuenta está pendiente de activación. El administrador debe aprobar tu acceso para que puedas ver tus entrenamientos.
       </Text>
+
       <TouchableOpacity
-        style={{ backgroundColor: '#FFD700', paddingHorizontal: 32, paddingVertical: 16, borderRadius: 8 }}
+        style={{ 
+          backgroundColor: '#FFD700', 
+          paddingHorizontal: 40, paddingVertical: 18, 
+          borderRadius: 30, shadowColor: '#FFD700', shadowOpacity: 0.2 
+        }}
         onPress={onSignOut}
       >
-        <Text style={{ color: '#000', fontWeight: 'bold', fontSize: 16 }}>Cerrar Sesión</Text>
+        <Text style={{ color: '#000', fontWeight: '900', fontSize: 14, textTransform: 'uppercase' }}>Cerrar Sesión</Text>
       </TouchableOpacity>
     </View>
   );
