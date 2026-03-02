@@ -22,10 +22,10 @@ export default function CoachStudentsScreen({ navigation }) {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
 
-  // 1. OCULTAMOS EL HEADER DEL NAVIGATOR (Para evitar conflictos en el desplegado)
+  // 1. ELIMINAMOS EL HEADER DEL SISTEMA POR COMPLETO
   useLayoutEffect(() => {
     navigation.setOptions({
-      headerShown: false, 
+      headerShown: false,
     });
   }, [navigation]);
 
@@ -78,16 +78,25 @@ export default function CoachStudentsScreen({ navigation }) {
   return (
     <SafeAreaView style={styles.container}>
       
-      {/* 2. HEADER MANUAL (Esto aparecerá sí o sí en Git Desplegado) */}
+      {/* HEADER MANUAL CON Z-INDEX PARA WEB */}
       <View style={styles.customHeader}>
         <TouchableOpacity 
-          onPress={() => navigation.navigate('Dashboard')} 
+          onPress={() => {
+            // Lógica robusta para volver
+            if (navigation.canGoBack()) {
+                navigation.goBack();
+            } else {
+                navigation.navigate('Dashboard'); // Asegúrate que tu Home se llame así
+            }
+          }} 
           style={styles.backButton}
         >
           <Ionicons name="arrow-back" size={28} color="#FFD700" />
         </TouchableOpacity>
         
-        <Text style={styles.headerTitle}>Gestión de Atletas</Text>
+        <View style={styles.titleWrapper}>
+            <Text style={styles.headerTitle}>Gestión de Atletas</Text>
+        </View>
 
         <TouchableOpacity onPress={signOut} style={styles.logoutButton}>
           <Ionicons name="log-out-outline" size={26} color="#FFD700" />
@@ -142,26 +151,46 @@ export default function CoachStudentsScreen({ navigation }) {
 }
 
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#000' },
+  container: { 
+    flex: 1, 
+    backgroundColor: '#000',
+    paddingTop: Platform.OS === 'web' ? 0 : 30 // Evita que en web se baje el header
+  },
   centered: { flex: 1, backgroundColor: '#000', justifyContent: 'center', alignItems: 'center' },
   
-  // ESTILOS DEL HEADER MANUAL
   customHeader: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 15,
-    height: 60,
+    height: 65,
     backgroundColor: '#000',
     borderBottomWidth: 1,
     borderBottomColor: '#222',
-    paddingTop: Platform.OS === 'android' ? 10 : 0, // Ajuste para móviles
+    zIndex: 1000, // Vital para web
+    elevation: 10,
   },
-  backButton: { width: 40, height: 40, justifyContent: 'center' },
-  logoutButton: { width: 40, height: 40, justifyContent: 'center', alignItems: 'flex-end' },
-  headerTitle: { color: '#FFD700', fontSize: 18, fontWeight: 'bold' },
-
-  // Buscador y Lista
+  backButton: { 
+    paddingHorizontal: 20, 
+    height: '100%', 
+    justifyContent: 'center',
+    zIndex: 1001 
+  },
+  logoutButton: { 
+    paddingHorizontal: 20, 
+    height: '100%', 
+    justifyContent: 'center',
+    zIndex: 1001 
+  },
+  titleWrapper: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center'
+  },
+  headerTitle: { 
+    color: '#FFD700', 
+    fontSize: 18, 
+    fontWeight: 'bold',
+    textAlign: 'center'
+  },
   searchSection: { padding: 15 },
   searchContainer: { 
     flexDirection: 'row', 
