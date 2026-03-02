@@ -2,17 +2,16 @@ import React, { useState, useCallback } from 'react';
 import { 
   View, Text, FlatList, StyleSheet, TouchableOpacity, 
   ActivityIndicator, RefreshControl, TextInput, Modal, 
-  ScrollView, Alert, KeyboardAvoidingView, Platform,
-  SafeAreaView
+  ScrollView, Alert, KeyboardAvoidingView, Platform 
 } from 'react-native';
 import { supabase } from '../../config/supabaseClient';
 import { createClient } from '@supabase/supabase-js';
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
 
-// CLIENTE ADMIN
+// CLIENTE ADMIN: Necesario para crear usuarios (Auth) sin cerrar la sesión actual
 const SUPABASE_URL = 'https://khrzhzeqdbizbmqdwebw.supabase.co';
-const SUPABASE_SERVICE_KEY = 'TU_SERVICE_ROLE_KEY_AQUI'; 
+const SUPABASE_SERVICE_KEY = 'TU_SERVICE_ROLE_KEY_AQUI'; // Usa la Service Role para crear usuarios
 const supabaseAdmin = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY, {
   auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false }
 });
@@ -80,11 +79,12 @@ export default function StudentManagement({ route, navigation }) {
     setCoaches(data || []);
   };
 
+  // --- LÓGICA DE NEGOCIO ---
   const handleSearch = (text) => {
     setSearch(text);
     const filtered = students.filter(s => 
       s.full_name.toLowerCase().includes(text.toLowerCase()) || 
-      (s.email && s.email.toLowerCase().includes(text.toLowerCase()))
+      s.email?.toLowerCase().includes(text.toLowerCase())
     );
     setFilteredStudents(filtered);
   };
@@ -128,21 +128,53 @@ export default function StudentManagement({ route, navigation }) {
 
   const handleSave = async () => {
     const { name, email, password, level, goal, coach_id } = formData;
+
     if (!name || !coach_id || (!isEditing && (!email || !password))) {
       Alert.alert("Campos incompletos", "Por favor rellena todos los datos y selecciona un coach.");
       return;
     }
+
     setSaving(true);
     try {
       if (isEditing) {
-        const { error } = await supabase.from('profiles').update({ full_name: name, level, goal, coach_id }).eq('id', selectedId);
+        // ACTUALIZAR PERFIL EXISTENTE
+        const { error } = await supabase
+          .from('profiles')
+          .update({
+            full_name: name,
+            level: level,
+            goal: goal,
+            coach_id: coach_id
+          })
+          .eq('id', selectedId);
+
         if (error) throw error;
-        Alert.alert("Éxito", "Atleta actualizado.");
+        Alert.alert("Éxito", "Atleta actualizado correctamente.");
       } else {
-        const { data: authData, error: authError } = await supabaseAdmin.auth.signUp({ email: email.trim(), password });
+        // CREAR NUEVO USUARIO EN AUTH
+        const { data: authData, error: authError } = await supabaseAdmin.auth.signUp({
+          email: email.trim(),
+          password: password,
+        });
+
         if (authError) throw authError;
+
         if (authData.user) {
-          await supabase.from('profiles').update({ full_name: name, role: 'alumno', status: 'Active', level, goal, coach_id, box_city: 'Santiago' }).eq('id', authData.user.id);
+          // ACTUALIZAR EL PERFIL CREADO POR TRIGGER O INSERTAR
+          const { error: profileError } = await supabase
+            .from('profiles')
+            .update({
+              full_name: name,
+              role: 'alumno',
+              status: 'Active',
+              level: level,
+              goal: goal,
+              coach_id: coach_id,
+              box_city: 'Santiago'
+            })
+            .eq('id', authData.user.id);
+
+          if (profileError) throw profileError;
           Alert.alert("Éxito", "Nuevo atleta registrado.");
         }
       }
@@ -150,12 +182,15 @@ export default function StudentManagement({ route, navigation }) {
       fetchStudents();
     } catch (error) {
       Alert.alert("Error", error.message);
-    } finally { setSaving(false); }
+    } finally {
+      setSaving(false);
+    }
   };
 
+  // --- RENDER ---
   return (
     <View style={styles.container}>
-      {/* HEADER PRINCIPAL */}
+      {/* HEADER */}
       <View style={styles.header}>
         <View style={{ flex: 1 }}>
           <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
@@ -169,29 +204,38 @@ export default function StudentManagement({ route, navigation }) {
         </TouchableOpacity>
       </View>
 
+      {/* BUSCADOR */}
       <View style={styles.searchContainer}>
         <Ionicons name="search" size={20} color="#666" />
         <TextInput
           style={styles.searchInput}
-          placeholder="Buscar atleta..."
+          placeholder="Buscar por nombre o correo..."
           placeholderTextColor="#444"
           value={search}
           onChangeText={handleSearch}
         />
       </View>
 
+      {/* LISTA */}
       <FlatList
         data={filteredStudents}
         keyExtractor={(item) => item.id}
         showsVerticalScrollIndicator={false}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={fetchStudents} tintColor="#FFD700" />}
-        contentContainerStyle={{ paddingBottom: 100 }}
         renderItem={({ item }) => {
           const isExpired = checkIsExpired(item.plan_end_date);
           const isActive = item.status === 'Active';
+
           return (
-            <View style={[styles.card, !isActive && styles.cardInactive, isExpired && isActive && styles.cardExpired]}>
-              <TouchableOpacity style={{ flex: 1 }} onPress={() => navigation.navigate('Planner', { student: item })}>
+            <View style={[
+              styles.card, 
+              !isActive && styles.cardInactive, 
+              isExpired && isActive && styles.cardExpired
+            ]}>
+              <TouchableOpacity 
+                style={{ flex: 1 }} 
+                onPress={() => navigation.navigate('Planner', { student: item })}
+              >
                 <View style={styles.cardHeader}>
                   <View style={{ flex: 1 }}>
                     <Text style={[styles.studentName, isExpired && isActive && {color: '#fff'}]}>{item.full_name}</Text>
@@ -203,16 +247,24 @@ export default function StudentManagement({ route, navigation }) {
                     <Text style={[styles.statusText, { color: isActive ? '#ADFF2F' : '#999' }]}>{isActive ? 'ACTIVO' : 'INACTIVO'}</Text>
                   </View>
                 </View>
+
                 <View style={styles.statsGrid}>
                   <View style={styles.statBox}><Text style={styles.statLabel}>PESO</Text><Text style={styles.statValue}>{item.weight || '--'}kg</Text></View>
                   <View style={[styles.statBox, styles.statBorder]}><Text style={styles.statLabel}>NIVEL</Text><Text style={styles.statValue}>{item.level}</Text></View>
                   <View style={styles.statBox}><Text style={styles.statLabel}>ALTURA</Text><Text style={styles.statValue}>{item.height || '--'}cm</Text></View>
                 </View>
               </TouchableOpacity>
+
               <View style={styles.cardActions}>
-                <TouchableOpacity style={styles.actionBtn} onPress={() => openEditModal(item)}><Ionicons name="pencil" size={18} color="#FFD700" /></TouchableOpacity>
+                <TouchableOpacity style={styles.actionBtn} onPress={() => openEditModal(item)}>
+                  <Ionicons name="pencil" size={18} color={isExpired && isActive ? "#fff" : "#FFD700"} />
+                </TouchableOpacity>
                 <TouchableOpacity style={styles.actionBtn} onPress={() => toggleStatus(item.id, item.status)}>
-                  <Ionicons name={isActive ? "person-remove-outline" : "person-add-outline"} size={20} color={isActive ? "#ff4444" : "#ADFF2F"} />
+                  <Ionicons 
+                    name={isActive ? "person-remove-outline" : "person-add-outline"} 
+                    size={20} 
+                    color={isActive ? "#ff4444" : "#ADFF2F"} 
+                  />
                 </TouchableOpacity>
               </View>
             </View>
@@ -220,97 +272,85 @@ export default function StudentManagement({ route, navigation }) {
         }}
       />
 
-      {/* MODAL CON SCROLL CORREGIDO */}
-      <Modal visible={modalVisible} animationType="slide" transparent={true} onRequestClose={() => setModalVisible(false)}>
+      {/* MODAL CREAR / EDITAR */}
+      <Modal visible={modalVisible} animationType="slide" transparent>
         <View style={styles.modalOverlay}>
-          <KeyboardAvoidingView 
-            behavior={Platform.OS === "ios" ? "padding" : "height"} 
-            style={{ flex: 1, justifyContent: 'flex-end' }}
-          >
-            <View style={styles.modalContent}>
-              <View style={styles.modalHeader}>
-                <Text style={styles.modalTitle}>{isEditing ? 'Editar Atleta' : 'Nuevo Atleta'}</Text>
-                <TouchableOpacity onPress={() => setModalVisible(false)}>
-                  <Ionicons name="close-circle" size={32} color="#444" />
-                </TouchableOpacity>
+          <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : "height"} style={styles.modalContent}>
+            <View style={styles.modalHeader}>
+              <Text style={styles.modalTitle}>{isEditing ? 'Editar Atleta' : 'Nuevo Atleta'}</Text>
+              <TouchableOpacity onPress={() => setModalVisible(false)}>
+                <Ionicons name="close-circle" size={32} color="#444" />
+              </TouchableOpacity>
+            </View>
+
+            <ScrollView showsVerticalScrollIndicator={false}>
+              <Text style={styles.modalLabel}>DATOS DE CUENTA</Text>
+              <TextInput 
+                placeholder="Nombre Completo" 
+                placeholderTextColor="#444" 
+                style={styles.modalInput} 
+                value={formData.name}
+                onChangeText={(t) => setFormData({...formData, name: t})} 
+              />
+              {!isEditing && (
+                <>
+                  <TextInput 
+                    placeholder="Email" 
+                    placeholderTextColor="#444" 
+                    autoCapitalize="none" 
+                    style={styles.modalInput} 
+                    onChangeText={(t) => setFormData({...formData, email: t})} 
+                  />
+                  <TextInput 
+                    placeholder="Contraseña Temporal" 
+                    placeholderTextColor="#444" 
+                    secureTextEntry 
+                    style={styles.modalInput} 
+                    onChangeText={(t) => setFormData({...formData, password: t})} 
+                  />
+                </>
+              )}
+
+              <Text style={styles.modalLabel}>NIVEL TÉCNICO</Text>
+              <View style={styles.levelGrid}>
+                {levels.map(l => (
+                  <TouchableOpacity 
+                    key={l.id} 
+                    style={[styles.levelItem, formData.level === l.id && styles.levelActive]} 
+                    onPress={() => setFormData({...formData, level: l.id})}
+                  >
+                    <Ionicons name={l.icon} size={16} color={formData.level === l.id ? '#000' : '#666'} />
+                    <Text style={[styles.levelItemText, formData.level === l.id && {color: '#000'}]}>{l.label}</Text>
+                  </TouchableOpacity>
+                ))}
               </View>
 
-              <ScrollView 
-                showsVerticalScrollIndicator={true} 
-                keyboardShouldPersistTaps="always"
-                contentContainerStyle={{ flexGrow: 1, paddingBottom: 60 }}
-              >
-                <Text style={styles.modalLabel}>DATOS DE ACCESO</Text>
-                <TextInput 
-                  placeholder="Nombre Completo" 
-                  placeholderTextColor="#444" 
-                  style={styles.modalInput} 
-                  value={formData.name}
-                  onChangeText={(t) => setFormData({...formData, name: t})} 
-                />
-                {!isEditing && (
-                  <>
-                    <TextInput 
-                      placeholder="Email" 
-                      placeholderTextColor="#444" 
-                      autoCapitalize="none" 
-                      keyboardType="email-address"
-                      style={styles.modalInput} 
-                      onChangeText={(t) => setFormData({...formData, email: t})} 
-                    />
-                    <TextInput 
-                      placeholder="Contraseña" 
-                      placeholderTextColor="#444" 
-                      secureTextEntry 
-                      style={styles.modalInput} 
-                      onChangeText={(t) => setFormData({...formData, password: t})} 
-                    />
-                  </>
-                )}
+              <Text style={styles.modalLabel}>ASIGNAR COACH</Text>
+              <View style={styles.coachGrid}>
+                {coaches.map(c => (
+                  <TouchableOpacity 
+                    key={c.id} 
+                    style={[styles.coachChip, formData.coach_id === c.id && styles.coachChipActive]} 
+                    onPress={() => setFormData({...formData, coach_id: c.id})}
+                  >
+                    <Text style={{color: formData.coach_id === c.id ? '#000' : '#fff', fontSize: 12}}>{c.full_name}</Text>
+                  </TouchableOpacity>
+                ))}
+              </View>
 
-                <Text style={styles.modalLabel}>NIVEL TÉCNICO</Text>
-                <View style={styles.levelGrid}>
-                  {levels.map(l => (
-                    <TouchableOpacity 
-                      key={l.id} 
-                      style={[styles.levelItem, formData.level === l.id && styles.levelActive]} 
-                      onPress={() => setFormData({...formData, level: l.id})}
-                    >
-                      <Ionicons name={l.icon} size={16} color={formData.level === l.id ? '#000' : '#666'} />
-                      <Text style={[styles.levelItemText, formData.level === l.id && {color: '#000'}]}>{l.label}</Text>
-                    </TouchableOpacity>
-                  ))}
-                </View>
+              <Text style={styles.modalLabel}>OBJETIVO</Text>
+              <TextInput 
+                placeholder="Ej: Bajar grasa, subir PR de Clean..." 
+                placeholderTextColor="#444" 
+                style={styles.modalInput} 
+                value={formData.goal}
+                onChangeText={(t) => setFormData({...formData, goal: t})} 
+              />
 
-                <Text style={styles.modalLabel}>ASIGNAR COACH</Text>
-                <View style={styles.coachGrid}>
-                  {coaches.map(c => (
-                    <TouchableOpacity 
-                      key={c.id} 
-                      style={[styles.coachChip, formData.coach_id === c.id && styles.coachChipActive]} 
-                      onPress={() => setFormData({...formData, coach_id: c.id})}
-                    >
-                      <Text style={{color: formData.coach_id === c.id ? '#000' : '#fff', fontSize: 12}}>{c.full_name}</Text>
-                    </TouchableOpacity>
-                  ))}
-                </View>
-
-                <Text style={styles.modalLabel}>OBJETIVOS / NOTAS</Text>
-                <TextInput 
-                  placeholder="Ej: Bajar de peso, mejorar Snatch..." 
-                  placeholderTextColor="#444" 
-                  multiline
-                  numberOfLines={3}
-                  style={[styles.modalInput, { height: 80, textAlignVertical: 'top' }]} 
-                  value={formData.goal}
-                  onChangeText={(t) => setFormData({...formData, goal: t})} 
-                />
-
-                <TouchableOpacity style={styles.saveBtn} onPress={handleSave} disabled={saving}>
-                  {saving ? <ActivityIndicator color="#000" /> : <Text style={styles.saveBtnText}>{isEditing ? 'ACTUALIZAR' : 'CREAR ATLETA'}</Text>}
-                </TouchableOpacity>
-              </ScrollView>
-            </View>
+              <TouchableOpacity style={styles.saveBtn} onPress={handleSave} disabled={saving}>
+                {saving ? <ActivityIndicator color="#000" /> : <Text style={styles.saveBtnText}>{isEditing ? 'GUARDAR CAMBIOS' : 'REGISTRAR ATLETA'}</Text>}
+              </TouchableOpacity>
+            </ScrollView>
           </KeyboardAvoidingView>
         </View>
       </Modal>
@@ -320,16 +360,19 @@ export default function StudentManagement({ route, navigation }) {
 
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#000', paddingHorizontal: 20 },
-  header: { flexDirection: 'row', alignItems: 'center', marginBottom: 20, marginTop: 60 },
+  header: { flexDirection: 'row', alignItems: 'center', marginBottom: 20, marginTop: 50 },
   backButton: { flexDirection: 'row', alignItems: 'center' },
   title: { color: '#fff', fontSize: 24, fontWeight: 'bold' },
-  subtitle: { color: '#666', fontSize: 12 },
+  subtitle: { color: '#666', fontSize: 12, marginTop: 2 },
   addButton: { backgroundColor: '#FFD700', width: 45, height: 45, borderRadius: 12, justifyContent: 'center', alignItems: 'center' },
   searchContainer: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#111', paddingHorizontal: 15, borderRadius: 12, marginBottom: 20, borderWidth: 1, borderColor: '#222' },
   searchInput: { flex: 1, color: '#fff', paddingVertical: 12, marginLeft: 10 },
+  
+  // Cards
   card: { backgroundColor: '#0a0a0a', padding: 18, borderRadius: 24, marginBottom: 15, borderWidth: 1, borderColor: '#1a1a1a', flexDirection: 'row' },
-  cardInactive: { opacity: 0.4 },
+  cardInactive: { opacity: 0.4, borderColor: '#333' },
   cardExpired: { backgroundColor: '#3b0000', borderColor: '#ff4444' },
+  
   cardHeader: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 15 },
   studentName: { color: '#fff', fontSize: 17, fontWeight: 'bold' },
   venceText: { color: '#666', fontSize: 11, marginTop: 4, fontWeight: 'bold' },
@@ -342,19 +385,21 @@ const styles = StyleSheet.create({
   statValue: { color: '#fff', fontSize: 12, fontWeight: 'bold' },
   cardActions: { marginLeft: 15, justifyContent: 'space-around', borderLeftWidth: 1, borderLeftColor: 'rgba(255,255,255,0.1)', paddingLeft: 10 },
   actionBtn: { padding: 8 },
-  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.85)' },
-  modalContent: { backgroundColor: '#0a0a0a', borderTopLeftRadius: 30, borderTopRightRadius: 30, padding: 25, maxHeight: '90%', borderTopWidth: 2, borderTopColor: '#FFD700' },
+
+  // Modal
+  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.9)', justifyContent: 'flex-end' },
+  modalContent: { backgroundColor: '#0a0a0a', borderTopLeftRadius: 30, borderTopRightRadius: 30, padding: 25, height: '85%', borderWidth: 1, borderColor: '#222' },
   modalHeader: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginBottom: 20 },
-  modalTitle: { color: '#fff', fontSize: 22, fontWeight: 'bold' },
+  modalTitle: { color: '#fff', fontSize: 20, fontWeight: 'bold' },
   modalLabel: { color: '#FFD700', fontSize: 10, fontWeight: 'bold', letterSpacing: 1, marginTop: 15, marginBottom: 10 },
   modalInput: { backgroundColor: '#111', color: '#fff', padding: 15, borderRadius: 12, marginBottom: 10, borderWidth: 1, borderColor: '#222' },
   levelGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
   levelItem: { flex: 1, minWidth: '45%', flexDirection: 'row', alignItems: 'center', backgroundColor: '#111', padding: 10, borderRadius: 10, borderWidth: 1, borderColor: '#222' },
   levelActive: { backgroundColor: '#FFD700', borderColor: '#FFD700' },
   levelItemText: { color: '#666', marginLeft: 8, fontSize: 11, fontWeight: 'bold' },
-  coachGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 10 },
+  coachGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 20 },
   coachChip: { paddingHorizontal: 12, paddingVertical: 8, borderRadius: 15, backgroundColor: '#111', borderWidth: 1, borderColor: '#333' },
   coachChipActive: { backgroundColor: '#FFD700', borderColor: '#FFD700' },
-  saveBtn: { backgroundColor: '#FFD700', padding: 18, borderRadius: 15, alignItems: 'center', marginTop: 25 },
-  saveBtnText: { color: '#000', fontWeight: 'bold', textTransform: 'uppercase' }
+  saveBtn: { backgroundColor: '#FFD700', padding: 18, borderRadius: 15, alignItems: 'center', marginTop: 20, marginBottom: 30 },
+  saveBtnText: { color: '#000', fontWeight: 'bold' }
 });
