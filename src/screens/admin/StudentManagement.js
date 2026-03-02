@@ -9,9 +9,9 @@ import { createClient } from '@supabase/supabase-js';
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
 
-// CLIENTE ADMIN: Necesario para crear usuarios (Auth) sin cerrar la sesión actual
+// CLIENTE ADMIN
 const SUPABASE_URL = 'https://khrzhzeqdbizbmqdwebw.supabase.co';
-const SUPABASE_SERVICE_KEY = 'TU_SERVICE_ROLE_KEY_AQUI'; // Usa la Service Role para crear usuarios
+const SUPABASE_SERVICE_KEY = 'TU_SERVICE_ROLE_KEY_AQUI'; 
 const supabaseAdmin = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY, {
   auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false }
 });
@@ -84,7 +84,7 @@ export default function StudentManagement({ route, navigation }) {
     setSearch(text);
     const filtered = students.filter(s => 
       s.full_name.toLowerCase().includes(text.toLowerCase()) || 
-      s.email?.toLowerCase().includes(text.toLowerCase())
+      (s.email && s.email.toLowerCase().includes(text.toLowerCase())) // Protección extra para el email
     );
     setFilteredStudents(filtered);
   };
@@ -137,40 +137,26 @@ export default function StudentManagement({ route, navigation }) {
     setSaving(true);
     try {
       if (isEditing) {
-        // ACTUALIZAR PERFIL EXISTENTE
         const { error } = await supabase
           .from('profiles')
-          .update({
-            full_name: name,
-            level: level,
-            goal: goal,
-            coach_id: coach_id
-          })
+          .update({ full_name: name, level: level, goal: goal, coach_id: coach_id })
           .eq('id', selectedId);
 
         if (error) throw error;
         Alert.alert("Éxito", "Atleta actualizado correctamente.");
       } else {
-        // CREAR NUEVO USUARIO EN AUTH
         const { data: authData, error: authError } = await supabaseAdmin.auth.signUp({
-          email: email.trim(),
-          password: password,
+          email: email.trim(), password: password,
         });
 
         if (authError) throw authError;
 
         if (authData.user) {
-          // ACTUALIZAR EL PERFIL CREADO POR TRIGGER O INSERTAR
           const { error: profileError } = await supabase
             .from('profiles')
             .update({
-              full_name: name,
-              role: 'alumno',
-              status: 'Active',
-              level: level,
-              goal: goal,
-              coach_id: coach_id,
-              box_city: 'Santiago'
+              full_name: name, role: 'alumno', status: 'Active',
+              level: level, goal: goal, coach_id: coach_id, box_city: 'Santiago'
             })
             .eq('id', authData.user.id);
 
@@ -222,20 +208,14 @@ export default function StudentManagement({ route, navigation }) {
         keyExtractor={(item) => item.id}
         showsVerticalScrollIndicator={false}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={fetchStudents} tintColor="#FFD700" />}
+        contentContainerStyle={{ paddingBottom: 20 }}
         renderItem={({ item }) => {
           const isExpired = checkIsExpired(item.plan_end_date);
           const isActive = item.status === 'Active';
 
           return (
-            <View style={[
-              styles.card, 
-              !isActive && styles.cardInactive, 
-              isExpired && isActive && styles.cardExpired
-            ]}>
-              <TouchableOpacity 
-                style={{ flex: 1 }} 
-                onPress={() => navigation.navigate('Planner', { student: item })}
-              >
+            <View style={[styles.card, !isActive && styles.cardInactive, isExpired && isActive && styles.cardExpired]}>
+              <TouchableOpacity style={{ flex: 1 }} onPress={() => navigation.navigate('Planner', { student: item })}>
                 <View style={styles.cardHeader}>
                   <View style={{ flex: 1 }}>
                     <Text style={[styles.studentName, isExpired && isActive && {color: '#fff'}]}>{item.full_name}</Text>
@@ -260,11 +240,7 @@ export default function StudentManagement({ route, navigation }) {
                   <Ionicons name="pencil" size={18} color={isExpired && isActive ? "#fff" : "#FFD700"} />
                 </TouchableOpacity>
                 <TouchableOpacity style={styles.actionBtn} onPress={() => toggleStatus(item.id, item.status)}>
-                  <Ionicons 
-                    name={isActive ? "person-remove-outline" : "person-add-outline"} 
-                    size={20} 
-                    color={isActive ? "#ff4444" : "#ADFF2F"} 
-                  />
+                  <Ionicons name={isActive ? "person-remove-outline" : "person-add-outline"} size={20} color={isActive ? "#ff4444" : "#ADFF2F"} />
                 </TouchableOpacity>
               </View>
             </View>
@@ -274,8 +250,11 @@ export default function StudentManagement({ route, navigation }) {
 
       {/* MODAL CREAR / EDITAR */}
       <Modal visible={modalVisible} animationType="slide" transparent>
-        <View style={styles.modalOverlay}>
-          <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : "height"} style={styles.modalContent}>
+        <KeyboardAvoidingView 
+          behavior={Platform.OS === "ios" ? "padding" : "height"} 
+          style={styles.modalOverlay}
+        >
+          <View style={styles.modalContent}>
             <View style={styles.modalHeader}>
               <Text style={styles.modalTitle}>{isEditing ? 'Editar Atleta' : 'Nuevo Atleta'}</Text>
               <TouchableOpacity onPress={() => setModalVisible(false)}>
@@ -283,7 +262,12 @@ export default function StudentManagement({ route, navigation }) {
               </TouchableOpacity>
             </View>
 
-            <ScrollView showsVerticalScrollIndicator={false}>
+            {/* --- AQUÍ ESTÁ LA MAGIA DEL SCROLL --- */}
+            <ScrollView 
+              showsVerticalScrollIndicator={false}
+              contentContainerStyle={{ flexGrow: 1, paddingBottom: 40 }}
+              keyboardShouldPersistTaps="handled"
+            >
               <Text style={styles.modalLabel}>DATOS DE CUENTA</Text>
               <TextInput 
                 placeholder="Nombre Completo" 
@@ -351,8 +335,8 @@ export default function StudentManagement({ route, navigation }) {
                 {saving ? <ActivityIndicator color="#000" /> : <Text style={styles.saveBtnText}>{isEditing ? 'GUARDAR CAMBIOS' : 'REGISTRAR ATLETA'}</Text>}
               </TouchableOpacity>
             </ScrollView>
-          </KeyboardAvoidingView>
-        </View>
+          </View>
+        </KeyboardAvoidingView>
       </Modal>
     </View>
   );
