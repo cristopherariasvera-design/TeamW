@@ -165,3 +165,4 @@ const styles = StyleSheet.create({
   buttonDisabled: { backgroundColor: '#998500', opacity: 0.6 },
   buttonText: { color: '#000', fontSize: 16, fontWeight: '900', textTransform: 'uppercase' },
 });
+

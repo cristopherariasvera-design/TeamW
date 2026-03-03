@@ -83,18 +83,15 @@ export const AuthProvider = ({ children }) => {
     return { error };
   };
 
-  const resetPassword = async (email) => {
-    // Nota: Usamos la URL con el hash para GitHub Pages
-    const redirectUrl = __DEV__ 
-      ? 'http://localhost:8081/#/ResetPasswordScreen' 
-      : 'https://cristopherariasvera-design.github.io/TeamW/#/ResetPasswordScreen';
+const resetPassword = async (email) => {
+  const redirectUrl = __DEV__ 
+    ? 'http://localhost:8081/#/ResetPasswordScreen' 
+    : 'https://cristopherariasvera-design.github.io/TeamW/#/ResetPasswordScreen';
 
-    console.log("Enviando enlace a:", redirectUrl);
-
-    return await supabase.auth.resetPasswordForEmail(email, {
-      redirectTo: redirectUrl,
-    });
-  };
+  return await supabase.auth.resetPasswordForEmail(email, {
+    redirectTo: redirectUrl,
+  });
+};
 
   const value = {
     user,
