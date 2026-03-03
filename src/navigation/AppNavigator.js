@@ -3,9 +3,8 @@ import { createStackNavigator } from '@react-navigation/stack';
 import { NavigationContainer } from '@react-navigation/native';
 import { useAuth } from '../contexts/AuthContext';
 import { ActivityIndicator, View, Text, TouchableOpacity } from 'react-native';
-import * as Linking from 'expo-linking'; // <--- IMPORTANTE PARA EL LOCALHOST
+import * as Linking from 'expo-linking';
 
-// --- IMPORTACIONES PARA LOS ICONOS ---
 import * as Font from 'expo-font';
 import { Ionicons, FontAwesome, MaterialIcons, MaterialCommunityIcons } from '@expo/vector-icons';
 
@@ -13,7 +12,7 @@ import { Ionicons, FontAwesome, MaterialIcons, MaterialCommunityIcons } from '@e
 import LoginScreen from '../screens/auth/LoginScreen';
 import RegisterScreen from '../screens/auth/RegisterScreen';
 import ForgotPasswordScreen from '../screens/auth/ForgotPasswordScreen';
-import ResetPasswordScreen from '../screens/auth/ResetPasswordScreen'; // <--- ASEGÚRATE DE CREAR ESTE ARCHIVO
+import ResetPasswordScreen from '../screens/auth/ResetPasswordScreen';
 
 // Role-based navigators
 import AdminNavigator from './AdminNavigator';
@@ -22,27 +21,25 @@ import StudentNavigator from './StudentNavigator';
 
 const Stack = createStackNavigator();
 
-// --- CONFIGURACIÓN DE DEEP LINKING ---
 const linking = {
   prefixes: [
-    'http://localhost:8081', // Para pruebas en navegador local
-    Linking.createURL('/'),  // Para Expo Go (exp://)
-    'https://cristopherariasvera-design.github.io/TeamW', // Para producción
+    'http://localhost:8081',
+    Linking.createURL('/'),
+    'https://cristopherariasvera-design.github.io/TeamW',
   ],
   config: {
     screens: {
-      // Mapeamos la URL que envía Supabase a la pantalla de la App
-      ResetPassword: 'reset-password', 
+      ResetPassword: 'ResetPasswordScreen', // <--- Asegúrate que coincida con el nombre en el Stack
       Login: 'login',
     },
   },
 };
 
 export default function AppNavigator() {
-  const { user, profile, loading, signOut } = useAuth();
+  // EXTRAEMOS isRecovering del Contexto
+  const { user, profile, loading, signOut, isRecovering } = useAuth();
   const [fontsLoaded, setFontsLoaded] = useState(false);
 
-  // CARGA DE FUENTES
   useEffect(() => {
     async function loadResources() {
       try {
@@ -72,24 +69,38 @@ export default function AppNavigator() {
   return (
     <NavigationContainer linking={linking}> 
       <Stack.Navigator screenOptions={{ headerShown: false }}>
-        {!user ? (
+        
+        {/* PRIORIDAD 1: MODO RECUPERACIÓN */}
+        {isRecovering ? (
+          <Stack.Screen name="ResetPassword" component={ResetPasswordScreen} />
+        ) : 
+        
+        /* PRIORIDAD 2: USUARIO NO LOGUEADO */
+        !user ? (
           <>
             <Stack.Screen name="Login" component={LoginScreen} />
             <Stack.Screen name="Register" component={RegisterScreen} />
             <Stack.Screen name="ForgotPassword" component={ForgotPasswordScreen} />
             <Stack.Screen name="ResetPassword" component={ResetPasswordScreen} />
           </>
-        ) : profile?.status !== 'Active' ? (
+        ) : 
+
+        /* PRIORIDAD 3: USUARIO PENDIENTE */
+        profile?.status !== 'Active' ? (
           <Stack.Screen name="Pending">
             {(props) => <PendingScreen {...props} onSignOut={signOut} />}
           </Stack.Screen>
-        ) : profile?.role === 'admin' ? (
+        ) : 
+
+        /* PRIORIDAD 4: FLUJO NORMAL POR ROL */
+        profile?.role === 'admin' ? (
           <Stack.Screen name="AdminApp" component={AdminNavigator} />
         ) : profile?.role === 'coach' ? (
           <Stack.Screen name="CoachApp" component={CoachNavigator} />
         ) : (
           <Stack.Screen name="StudentApp" component={StudentNavigator} />
         )}
+
       </Stack.Navigator>
     </NavigationContainer>
   );

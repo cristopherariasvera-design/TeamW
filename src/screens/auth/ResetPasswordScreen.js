@@ -6,13 +6,17 @@ import {
 } from 'react-native';
 import { Ionicons } from '@expo/vector-icons';
 import { supabase } from '../../config/supabaseClient';
+import { useAuth } from '../../contexts/AuthContext'; // <--- IMPORTANTE
 
 export default function ResetPasswordScreen({ navigation }) {
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
   const [loading, setLoading] = useState(false);
   
-  // Estado para el mensaje de error (mismo Pop-up que el Login)
+  // Extraemos setIsRecovering para "apagar" el modo recuperación al terminar
+  const { setIsRecovering } = useAuth(); 
+
+  // Estado para el mensaje de error (Pop-up amarillo)
   const [errorMsg, setErrorMsg] = useState('');
   const [showError, setShowError] = useState(false);
 
@@ -40,22 +44,34 @@ export default function ResetPasswordScreen({ navigation }) {
 
     setLoading(true);
     
-    // Esta función de Supabase toma el token que viene en la URL 
-    // automáticamente para validar el cambio
-    const { error } = await supabase.auth.updateUser({
-      password: password
-    });
+    try {
+      // Actualizamos la contraseña en Supabase
+      // (Supabase ya tiene la sesión activa gracias al link del correo)
+      const { error } = await supabase.auth.updateUser({
+        password: password
+      });
 
-    setLoading(false);
+      if (error) throw error;
 
-    if (error) {
-      triggerError(error.message);
-    } else {
+      // Si todo sale bien, mostramos el éxito
       Alert.alert(
         '¡Éxito!', 
-        'Tu contraseña ha sido actualizada. Ya puedes ingresar.',
-        [{ text: 'Ir al Login', onPress: () => navigation.navigate('Login') }]
+        'Tu contraseña ha sido actualizada correctamente.',
+        [{ 
+          text: 'Entrar a TeamW', 
+          onPress: () => {
+            // APAGAMOS el modo recuperación. 
+            // Esto hace que AppNavigator detecte que ya no estamos recuperando
+            // y te mande al Dashboard automáticamente.
+            setIsRecovering(false); 
+          } 
+        }]
       );
+
+    } catch (error) {
+      triggerError(error.message);
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -75,7 +91,9 @@ export default function ResetPasswordScreen({ navigation }) {
 
         <View style={styles.content}>
           <View style={styles.header}>
-            <Ionicons name="key-outline" size={60} color="#FFD700" />
+            <View style={styles.iconCircle}>
+                <Ionicons name="key-outline" size={40} color="#FFD700" />
+            </View>
             <Text style={styles.title}>Nueva Contraseña</Text>
             <Text style={styles.subtitle}>
               Establece tu nueva clave para acceder a TeamW.
@@ -129,8 +147,12 @@ const styles = StyleSheet.create({
   errorText: { color: '#000', fontWeight: '800', marginLeft: 10 },
   content: { flex: 1, justifyContent: 'center', paddingHorizontal: 30 },
   header: { alignItems: 'center', marginBottom: 40 },
+  iconCircle: {
+    width: 80, height: 80, borderRadius: 40, backgroundColor: '#111',
+    justifyContent: 'center', alignItems: 'center', borderWidth: 1, borderColor: '#333'
+  },
   title: { color: '#fff', fontSize: 24, fontWeight: 'bold', marginTop: 20 },
-  subtitle: { color: '#666', textAlign: 'center', marginTop: 10 },
+  subtitle: { color: '#666', textAlign: 'center', marginTop: 10, lineHeight: 20 },
   form: { width: '100%' },
   input: {
     backgroundColor: '#121212', borderRadius: 10, padding: 18,
@@ -140,6 +162,6 @@ const styles = StyleSheet.create({
     backgroundColor: '#FFD700', borderRadius: 10, padding: 20,
     alignItems: 'center', marginTop: 10
   },
-  buttonDisabled: { backgroundColor: '#998500' },
+  buttonDisabled: { backgroundColor: '#998500', opacity: 0.6 },
   buttonText: { color: '#000', fontSize: 16, fontWeight: '900', textTransform: 'uppercase' },
 });

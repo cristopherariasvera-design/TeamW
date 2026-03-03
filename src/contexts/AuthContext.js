@@ -7,28 +7,37 @@ export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
   const [profile, setProfile] = useState(null);
   const [loading, setLoading] = useState(true);
+  // NUEVO: Estado para saber si venimos de un correo de recuperación
+  const [isRecovering, setIsRecovering] = useState(false);
 
   useEffect(() => {
-    // Verificar sesión actual al arrancar la app
+    // 1. Verificar sesión inicial
     supabase.auth.getSession().then(({ data: { session } }) => {
       if (session?.user) {
         setUser(session.user);
         loadProfile(session.user.id);
       } else {
-        setUser(null);
-        setProfile(null);
         setLoading(false);
       }
     });
 
-    // Escuchar cambios de autenticación (Login, Logout, Recuperación)
-    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (_event, session) => {
-      if (session?.user) {
+    // 2. Escuchar cambios de estado (Aquí está el truco)
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+      console.log("Evento de Auth:", event); // Para que lo veas en consola
+
+      if (event === 'PASSWORD_RECOVERY') {
+        // ACTIVAMOS el modo recuperación
+        setIsRecovering(true);
+        setUser(session?.user ?? null);
+        setLoading(false);
+      } else if (session?.user) {
         setUser(session.user);
         await loadProfile(session.user.id);
+        setIsRecovering(false); // Por si acaso, nos aseguramos que esté en false
       } else {
         setUser(null);
         setProfile(null);
+        setIsRecovering(false);
         setLoading(false);
       }
     });
@@ -43,7 +52,6 @@ export const AuthProvider = ({ children }) => {
         .select('*')
         .eq('id', userId)
         .single();
-
       if (error) throw error;
       setProfile(data);
     } catch (error) {
@@ -61,9 +69,7 @@ export const AuthProvider = ({ children }) => {
     return await supabase.auth.signUp({
       email,
       password,
-      options: {
-        data: { full_name: fullName }
-      }
+      options: { data: { full_name: fullName } }
     });
   };
 
@@ -72,29 +78,30 @@ export const AuthProvider = ({ children }) => {
     if (!error) {
       setUser(null);
       setProfile(null);
+      setIsRecovering(false);
     }
     return { error };
   };
 
-const resetPassword = async (email) => {
-  // IMPORTANTE: La URL de GitHub Pages necesita el hash (#) si usas HashRouter
-  // o simplemente la ruta si usas un router estándar. 
-  // Probamos con la ruta directa que es lo más común en Expo Web:
-const redirectUrl = __DEV__ 
-  ? 'https://cristopherariasvera-design.github.io/TeamW/#/ResetPasswordScreen' 
-  : 'https://cristopherariasvera-design.github.io/TeamW/#/ResetPasswordScreen';
+  const resetPassword = async (email) => {
+    // Nota: Usamos la URL con el hash para GitHub Pages
+    const redirectUrl = __DEV__ 
+      ? 'http://localhost:8081/#/ResetPasswordScreen' 
+      : 'https://cristopherariasvera-design.github.io/TeamW/#/ResetPasswordScreen';
 
-  console.log("Enviando enlace de recuperación a:", redirectUrl);
+    console.log("Enviando enlace a:", redirectUrl);
 
-  return await supabase.auth.resetPasswordForEmail(email, {
-    redirectTo: redirectUrl,
-  });
-};
+    return await supabase.auth.resetPasswordForEmail(email, {
+      redirectTo: redirectUrl,
+    });
+  };
 
   const value = {
     user,
     profile,
     loading,
+    isRecovering, // Exportamos el nuevo estado
+    setIsRecovering, // Exportamos la función para resetearlo después
     signIn,
     signUp,
     signOut,
@@ -106,8 +113,6 @@ const redirectUrl = __DEV__
 
 export const useAuth = () => {
   const context = useContext(AuthContext);
-  if (!context) {
-    throw new Error('useAuth must be used within an AuthProvider');
-  }
+  if (!context) throw new Error('useAuth must be used within an AuthProvider');
   return context;
 };
