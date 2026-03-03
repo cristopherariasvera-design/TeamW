@@ -80,9 +80,9 @@ const resetPassword = async (email) => {
   // IMPORTANTE: La URL de GitHub Pages necesita el hash (#) si usas HashRouter
   // o simplemente la ruta si usas un router estándar. 
   // Probamos con la ruta directa que es lo más común en Expo Web:
-  const redirectUrl = __DEV__ 
-    ? 'http://localhost:8081/ResetPasswordScreen' 
-    : 'https://cristopherariasvera-design.github.io/TeamW/ResetPasswordScreen';
+const redirectUrl = __DEV__ 
+  ? 'http://localhost:8081/#/ResetPasswordScreen' 
+  : 'https://cristopherariasvera-design.github.io/TeamW/#/ResetPasswordScreen';
 
   console.log("Enviando enlace de recuperación a:", redirectUrl);
 
