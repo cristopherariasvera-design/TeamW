@@ -83,15 +83,17 @@ export const AuthProvider = ({ children }) => {
     return { error };
   };
 
-const resetPassword = async (email) => {
-  const redirectUrl = __DEV__ 
-    ? 'http://localhost:8081/#/ResetPasswordScreen' 
-    : 'https://cristopherariasvera-design.github.io/TeamW/#/ResetPasswordScreen';
+    const resetPassword = async (email) => {
+      const redirectUrl = __DEV__ 
+        ? 'http://localhost:8081/#/ResetPasswordScreen' 
+        : 'https://cristopherariasvera-design.github.io/TeamW/#/ResetPasswordScreen';
 
-  return await supabase.auth.resetPasswordForEmail(email, {
-    redirectTo: redirectUrl,
-  });
-};
+      console.log("Enviando enlace a:", redirectUrl);
+
+      return await supabase.auth.resetPasswordForEmail(email, {
+        redirectTo: redirectUrl,
+      });
+    };
 
   const value = {
     user,
