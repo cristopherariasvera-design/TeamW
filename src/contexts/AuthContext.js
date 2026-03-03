@@ -76,17 +76,20 @@ export const AuthProvider = ({ children }) => {
     return { error };
   };
 
-  // MODIFICADO: Agregamos redirectTo para que el link funcione en el móvil
-    const resetPassword = async (email) => {
-      // Si estás en localhost, usa esa URL, si no, usa la de GitHub
-      const redirectUrl = __DEV__ 
-        ? 'http://localhost:8081/' 
-        : 'https://cristopherariasvera-design.github.io/TeamW/';
+const resetPassword = async (email) => {
+  // IMPORTANTE: La URL de GitHub Pages necesita el hash (#) si usas HashRouter
+  // o simplemente la ruta si usas un router estándar. 
+  // Probamos con la ruta directa que es lo más común en Expo Web:
+  const redirectUrl = __DEV__ 
+    ? 'http://localhost:8081/ResetPasswordScreen' 
+    : 'https://cristopherariasvera-design.github.io/TeamW/ResetPasswordScreen';
 
-      return await supabase.auth.resetPasswordForEmail(email, {
-        redirectTo: redirectUrl,
-      });
-    };
+  console.log("Enviando enlace de recuperación a:", redirectUrl);
+
+  return await supabase.auth.resetPasswordForEmail(email, {
+    redirectTo: redirectUrl,
+  });
+};
 
   const value = {
     user,
