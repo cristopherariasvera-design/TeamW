@@ -38,7 +38,7 @@ export default function CoachDayEditor({ route, navigation }) {
           content: s.content || ''
         })));
       } else {
-        setSections([{ id: '1', name: 'A) CALENTAMIENTO', content: '' }]);
+        // setSections([{ id: '1', name: 'A) CALENTAMIENTO', content: '' }]);
       }
     } catch (e) {
       setSections([{ id: '1', name: 'A) SECCIÓN', content: '' }]);
