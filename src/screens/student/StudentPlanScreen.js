@@ -61,27 +61,41 @@ const groupByWeek = (plans) => {
     map[wk].push(plan);
   });
 
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
   return Object.keys(map)
     .sort((a, b) => Number(a) - Number(b))
     .map(wk => {
       const sessions = map[wk];
       const dates = sessions.map(s => parseDate(s.date)).filter(Boolean).sort((a, b) => a - b);
-      const monday = dates.length > 0 ? getMonday(dates[0]) : null;
-      const sunday = monday ? getSunday(monday) : null;
 
-      const today = new Date();
-      today.setHours(0, 0, 0, 0);
-      const isCurrentWeek = monday && sunday ? today >= monday && today <= sunday : false;
+      const firstSession = dates[0];
+      const lastSession  = dates[dates.length - 1];
+
+      // ✅ La semana es "actual" si hoy cae entre la primera y última sesión de ese week_number
+      // Usamos el lunes de la primera sesión y el domingo de la última para dar margen
+      // aunque el plan empiece un miércoles o un sábado
+      const weekStart = firstSession ? getMonday(firstSession) : null;
+      const weekEnd   = lastSession  ? getSunday(lastSession)  : null;
+      const isCurrentWeek = weekStart && weekEnd
+        ? today >= weekStart && today <= weekEnd
+        : false;
+
+      // Rango: primera fecha real → última fecha real del week_number
+      const rangeLabel = firstSession
+        ? firstSession.getTime() === lastSession.getTime()
+          ? fmtDay(firstSession)
+          : `${fmtDay(firstSession)} → ${fmtDay(lastSession)}`
+        : `Semana ${wk}`;
 
       return {
         weekNumber: Number(wk),
         sessions,
-        monday,
-        sunday,
+        firstSession,
+        lastSession,
         isCurrentWeek,
-        rangeLabel: monday && sunday
-          ? `${fmtDay(monday)} → ${fmtDay(sunday)}`
-          : `Semana ${wk}`,
+        rangeLabel,
       };
     });
 };
@@ -114,12 +128,30 @@ export default function StudentPlanScreen({ navigation }) {
   const loadPlans = async () => {
     try {
       setLoading(true);
+      // Calculamos el rango de fechas del mes seleccionado
+      // + 6 días antes (por si una semana empieza en el mes anterior)
+      // + 6 días después (por si una semana termina en el mes siguiente)
+      const firstDay = new Date(selectedYear, selectedMonth - 1, 1);
+      const lastDay  = new Date(selectedYear, selectedMonth, 0); // último día del mes
+
+      // Lunes de la semana que contiene el primer día
+      const rangeStart = new Date(firstDay);
+      const startDay = rangeStart.getDay();
+      rangeStart.setDate(rangeStart.getDate() - (startDay === 0 ? 6 : startDay - 1));
+
+      // Domingo de la semana que contiene el último día
+      const rangeEnd = new Date(lastDay);
+      const endDay = rangeEnd.getDay();
+      rangeEnd.setDate(rangeEnd.getDate() + (endDay === 0 ? 0 : 7 - endDay));
+
+      const toISO = (d) => d.toISOString().split('T')[0];
+
       const { data, error } = await supabase
         .from('plans')
         .select('*')
         .eq('student_id', profile.id)
-        .eq('month', selectedMonth)
-        .eq('year', selectedYear)
+        .gte('date', toISO(rangeStart))
+        .lte('date', toISO(rangeEnd))
         .order('date', { ascending: true });
 
       if (error) throw error;
