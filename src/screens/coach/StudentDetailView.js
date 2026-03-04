@@ -14,6 +14,7 @@ import {
 import { supabase } from '../../config/supabaseClient';
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
+import CommentsModal from '../student/CommentsModal';
 
 if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental) {
   UIManager.setLayoutAnimationEnabledExperimental(true);
@@ -230,6 +231,9 @@ export default function StudentDetailView({ route, navigation }) {
   const [cycles, setCycles] = useState([]);
   const [expandedWeeks, setExpandedWeeks] = useState({});
   const [loading, setLoading] = useState(true);
+  
+  // NUEVO ESTADO PARA CONTROLAR SI EL CHAT ESTÁ ABIERTO O CERRADO
+  const [chatVisible, setChatVisible] = useState(false);
 
   useFocusEffect(
     useCallback(() => {
@@ -313,16 +317,28 @@ export default function StudentDetailView({ route, navigation }) {
     setExpandedWeeks(prev => ({ ...prev, [expandKey]: !prev[expandKey] }));
   };
 
+  // Extraemos un planId válido para pasarle al Modal (si no hay, pasará undefined)
+  const firstPlanId = cycles[0]?.weeks[0]?.sessions[0]?.id;
+
   return (
     <View style={styles.container}>
       <View style={styles.header}>
         <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
           <Ionicons name="arrow-back" size={22} color="#FFD700" />
         </TouchableOpacity>
+        
         <View style={{ flex: 1 }}>
           <Text style={styles.headerLabel}>PROGRAMACIÓN DE</Text>
           <Text style={styles.headerName} numberOfLines={1}>{student?.full_name}</Text>
         </View>
+
+        {/* BOTÓN DE CHAT MODIFICADO PARA ABRIR EL MODAL */}
+        <TouchableOpacity 
+          style={styles.chatBtn}
+          onPress={() => setChatVisible(true)}
+        >
+          <Ionicons name="chatbubbles-sharp" size={22} color="#FFD700" />
+        </TouchableOpacity>
       </View>
 
       {loading ? (
@@ -365,6 +381,13 @@ export default function StudentDetailView({ route, navigation }) {
         />
       )}
 
+      {/* COMPONENTE DEL MODAL DE CHAT */}
+      <CommentsModal 
+        visible={chatVisible} 
+        onClose={() => setChatVisible(false)} 
+        planId={firstPlanId} 
+      />
+
       <TouchableOpacity
         style={styles.fab}
         onPress={() => navigation.navigate('PlannerScreen', {
@@ -384,6 +407,7 @@ const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#000' },
   header: { flexDirection: 'row', alignItems: 'center', paddingTop: 60, paddingHorizontal: 20, marginBottom: 8, gap: 14 },
   backBtn: { backgroundColor: '#111', padding: 10, borderRadius: 12 },
+  chatBtn: { backgroundColor: '#111', padding: 10, borderRadius: 12 },
   headerLabel: { color: '#FFD700', fontSize: 9, fontWeight: '900', letterSpacing: 2 },
   headerName: { color: '#fff', fontSize: 22, fontWeight: 'bold' },
   listContent: { paddingHorizontal: 20, paddingBottom: 120 },

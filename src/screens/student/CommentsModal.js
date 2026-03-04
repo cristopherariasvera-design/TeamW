@@ -178,8 +178,8 @@ const styles = StyleSheet.create({
   theirMessage: { alignSelf: 'flex-start' },
   bubble: { padding: 12, borderRadius: 18 },
   myBubble: { backgroundColor: '#FFD700', borderBottomRightRadius: 2 },
-  theirBubble: { backgroundColor: '#1a1a1a', borderBottomLeftRadius: 2, borderWidth: 1, borderColor: '#333' },
-  authorName: { fontSize: 11, fontWeight: 'bold', color: '#FFD700', marginBottom: 4 },
+  theirBubble: { backgroundColor: '#FFD700', borderBottomLeftRadius: 2, borderWidth: 1, borderColor: '#333' },
+  authorName: { fontSize: 11, fontWeight: 'bold', color: '#000', marginBottom: 4 },
   commentText: { fontSize: 15, color: '#000' }, // Texto negro en burbuja dorada
   commentDate: { fontSize: 10, color: '#666', marginTop: 4, textAlign: 'right' },
   smallAvatar: { width: 28, height: 28, borderRadius: 14, backgroundColor: '#444', justifyContent: 'center', alignItems: 'center', marginRight: 8, alignSelf: 'flex-end' },
