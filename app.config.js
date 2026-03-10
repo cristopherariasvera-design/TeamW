@@ -26,11 +26,12 @@ module.exports = ({ config }) => {
     web: {
       bundler: "metro",
       output: "single",
-      // Si es Vercel, usamos la raíz, si no, la subcarpeta de GitHub Pages
+      // Si es Vercel usamos "/", si es GitHub Pages usamos "/TeamW"
       baseUrl: isVercel ? "/" : "/TeamW",
     },
     experiments: {
       typedRoutes: false,
+      baseUrl: isVercel ? "/" : "/TeamW",
     },
     plugins: ["@react-native-community/datetimepicker"],
   };
