@@ -1,4 +1,4 @@
-export default ({ config }) => {
+module.exports = ({ config }) => {
   const isVercel = process.env.VERCEL === "1";
 
   return {
@@ -26,11 +26,11 @@ export default ({ config }) => {
     web: {
       bundler: "metro",
       output: "single",
+      // Si es Vercel, usamos la raíz, si no, la subcarpeta de GitHub Pages
       baseUrl: isVercel ? "/" : "/TeamW",
     },
     experiments: {
       typedRoutes: false,
-      baseUrl: isVercel ? "/" : "/TeamW",
     },
     plugins: ["@react-native-community/datetimepicker"],
   };
