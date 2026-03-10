@@ -35,7 +35,3 @@ export default ({ config }) => {
     plugins: ["@react-native-community/datetimepicker"],
   };
 };
-```
-
-**Paso 2** — En Vercel, ve a **Settings → Environment Variables** y agrega:
-```
