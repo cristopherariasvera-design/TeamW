@@ -119,6 +119,39 @@ export default function CoachDashboard({ navigation }) {
         </View>
       </View>
 
+      {/* NUEVO BLOQUE */}
+      <View style={styles.quickActions}>
+
+        <TouchableOpacity
+          style={styles.actionCard}
+          onPress={() => navigation.navigate('PlannerScreen')}
+        >
+          <Ionicons
+            name="document-text-outline"
+            size={28}
+            color="#FFD700"
+          />
+          <Text style={styles.actionTitle}>
+            Planificador
+          </Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={styles.actionCard}
+          onPress={() => navigation.navigate('CoachCalendar')}
+        >
+          <Ionicons
+            name="calendar-outline"
+            size={28}
+            color="#FFD700"
+          />
+          <Text style={styles.actionTitle}>
+            Calendario V2
+          </Text>
+        </TouchableOpacity>
+
+      </View>
+
       {loading && !refreshing ? (
         <ActivityIndicator color="#FFD700" size="large" style={{ marginTop: 50 }} />
       ) : (
@@ -261,5 +294,53 @@ const styles = StyleSheet.create({
     borderWidth: 1, 
     borderColor: '#FFD700' 
   },
-  emptyBtnText: { color: '#FFD700', fontWeight: 'bold' }
+  emptyBtnText: { color: '#FFD700', fontWeight: 'bold' },
+    quickActions: {
+    flexDirection: 'row',
+    paddingHorizontal: 15,
+    marginTop: 15,
+    marginBottom: 10,
+  },
+
+  actionCard: {
+    flex: 1,
+    backgroundColor: '#111',
+    borderWidth: 1,
+    borderColor: '#333',
+    borderRadius: 15,
+    padding: 15,
+    alignItems: 'center',
+    marginHorizontal: 5,
+  },
+
+  actionTitle: {
+    color: '#FFF',
+    marginTop: 8,
+    fontWeight: 'bold',
+    textAlign: 'center',
+  },
+    quickActions: {
+    flexDirection: 'row',
+    paddingHorizontal: 15,
+    marginTop: 15,
+    marginBottom: 10,
+  },
+
+  actionCard: {
+    flex: 1,
+    backgroundColor: '#111',
+    borderWidth: 1,
+    borderColor: '#333',
+    borderRadius: 15,
+    padding: 15,
+    alignItems: 'center',
+    marginHorizontal: 5,
+  },
+
+  actionTitle: {
+    color: '#FFF',
+    marginTop: 8,
+    fontWeight: 'bold',
+    textAlign: 'center',
+  },
 });

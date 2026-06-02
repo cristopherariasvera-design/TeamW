@@ -13,6 +13,9 @@ import PlannerScreen from '../screens/coach/PlannerScreen';
 import AddStudentScreen from '../screens/coach/AddStudentScreen'; 
 import CoachStudentsScreen from '../screens/coach/CoachStudentsScreen';
 
+import CoachCalendarScreen from '../screens/coach/CoachCalendarScreen';
+import CoachDayPlansScreen from '../screens/coach/CoachDayPlansScreen';
+// se agregan x nuevo modo de guardar
 const Stack = createNativeStackNavigator();
 
 export default function CoachNavigator() {
@@ -72,6 +75,18 @@ export default function CoachNavigator() {
         name="PlannerScreen" 
         component={PlannerScreen} 
         options={{ title: 'Cargar Planificación' }} 
+      />
+
+      <Stack.Screen
+        name="CoachCalendar"
+        component={CoachCalendarScreen}
+        options={{ title: 'Calendario WODs' }}
+      />
+
+      <Stack.Screen
+        name="CoachDayPlans"
+        component={CoachDayPlansScreen}
+        options={{ title: 'Planes del Día' }}
       />
       
     </Stack.Navigator>
