@@ -1,8 +1,8 @@
 import React, { createContext, useState, useEffect, useContext } from 'react';
 import { supabase } from '../config/supabaseClient';
 
-const AuthContext = createContext({});
-
+// const AuthContext = createContext({}); se cambia por el de abajo x pruebas
+const AuthContext = createContext(null);
 export const AuthProvider = ({ children }) => {
   const [user, setUser] = useState(null);
   const [profile, setProfile] = useState(null);
