@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useLayoutEffect } from 'react';
+import React, { useState, useCallback, useLayoutEffect, useEffect } from 'react';
 import {
   View,
   Text,
@@ -9,52 +9,73 @@ import {
   Alert,
   TextInput,
   SafeAreaView,
-  Platform
+  Platform,
 } from 'react-native';
+import { useFocusEffect } from '@react-navigation/native';
 import { supabase } from '../../config/supabaseClient';
 import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../../contexts/AuthContext';
 
 export default function CoachStudentsScreen({ navigation }) {
   const { profile, signOut } = useAuth();
+
   const [students, setStudents] = useState([]);
   const [filteredStudents, setFilteredStudents] = useState([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
 
-  // 1. ELIMINAMOS EL HEADER DEL SISTEMA POR COMPLETO
   useLayoutEffect(() => {
     navigation.setOptions({
       headerShown: false,
     });
   }, [navigation]);
 
-  useEffect(() => {
-    if (profile?.id) fetchAllStudents();
-  }, [profile?.id]);
+  useFocusEffect(
+    useCallback(() => {
+      if (profile?.id) {
+        fetchAllStudents();
+      }
+    }, [profile?.id])
+  );
 
   useEffect(() => {
-    const filtered = students.filter(s => 
-      s.full_name?.toLowerCase().includes(search.toLowerCase())
+    const filtered = students.filter((student) =>
+      student.full_name?.toLowerCase().includes(search.toLowerCase())
     );
+
     setFilteredStudents(filtered);
   }, [search, students]);
 
   const fetchAllStudents = async () => {
     try {
       setLoading(true);
+
       const { data, error } = await supabase
         .from('profiles')
-        .select('id, full_name, level, status, plan_end_date')
+        .select(`
+          id,
+          full_name,
+          email,
+          level,
+          status,
+          coach_id,
+          box_city,
+          plan_start_date,
+          plan_end_date,
+          sessions_per_week,
+          plan_weeks
+        `)
         .eq('role', 'alumno')
         .eq('coach_id', profile.id)
         .order('full_name', { ascending: true });
 
       if (error) throw error;
+
       setStudents(data || []);
       setFilteredStudents(data || []);
     } catch (error) {
-      console.error(error);
+      console.error('Error cargando atletas:', error.message);
+      Alert.alert('Error', 'No se pudieron cargar los atletas.');
     } finally {
       setLoading(false);
     }
@@ -62,50 +83,123 @@ export default function CoachStudentsScreen({ navigation }) {
 
   const toggleStatus = async (studentId, currentStatus) => {
     const newStatus = currentStatus === 'Active' ? 'Inactive' : 'Active';
-    try {
-      const { error } = await supabase.from('profiles').update({ status: newStatus }).eq('id', studentId);
-      if (error) throw error;
-      setStudents(prev => prev.map(s => s.id === studentId ? { ...s, status: newStatus } : s));
-    } catch (error) {
-      Alert.alert('Error', 'No se pudo actualizar.');
-    }
+
+    Alert.alert(
+      'Cambiar estado',
+      `¿Quieres dejar este alumno como ${newStatus === 'Active' ? 'ACTIVO' : 'INACTIVO'}?`,
+      [
+        {
+          text: 'Cancelar',
+          style: 'cancel',
+        },
+        {
+          text: 'Confirmar',
+          onPress: async () => {
+            try {
+              const { error } = await supabase
+                .from('profiles')
+                .update({ status: newStatus })
+                .eq('id', studentId);
+
+              if (error) throw error;
+
+              setStudents((prev) =>
+                prev.map((student) =>
+                  student.id === studentId
+                    ? { ...student, status: newStatus }
+                    : student
+                )
+              );
+            } catch (error) {
+              console.error('Error actualizando estado:', error.message);
+              Alert.alert('Error', 'No se pudo actualizar el estado.');
+            }
+          },
+        },
+      ]
+    );
   };
 
-  if (loading) return (
-    <View style={styles.centered}><ActivityIndicator color="#FFD700" size="large" /></View>
-  );
+  const goToPlanner = (student) => {
+    navigation.navigate('PlannerScreen', {
+      studentId: student.id,
+      studentName: student.full_name,
+    });
+  };
+
+  const goToStudentDetail = (student) => {
+    navigation.navigate('StudentDetail', {
+      student,
+    });
+  };
+
+  const hasCompletePeriod = (student) => {
+    return Boolean(
+      student.plan_start_date &&
+      student.plan_end_date &&
+      student.sessions_per_week &&
+      student.plan_weeks
+    );
+  };
+
+  const getPeriodText = (student) => {
+    if (!hasCompletePeriod(student)) {
+      return 'Sin período configurado';
+    }
+
+    return `Plan: ${student.plan_start_date} → ${student.plan_end_date}`;
+  };
+
+  const getPeriodSubText = (student) => {
+    if (!hasCompletePeriod(student)) {
+      return 'Debe configurar fecha inicio, término y veces por semana';
+    }
+
+    return `${student.sessions_per_week}x semana · ${student.plan_weeks} semanas`;
+  };
+
+  const activeCount = students.filter((student) => student.status === 'Active').length;
+  const withPeriodCount = students.filter((student) => hasCompletePeriod(student)).length;
+
+  if (loading) {
+    return (
+      <View style={styles.centered}>
+        <ActivityIndicator color="#FFD700" size="large" />
+      </View>
+    );
+  }
 
   return (
     <SafeAreaView style={styles.container}>
-      
-      {/* HEADER MANUAL CON Z-INDEX PARA WEB */}
       <View style={styles.customHeader}>
-        <TouchableOpacity 
+        <TouchableOpacity
           onPress={() => {
-            // Lógica robusta para volver
             if (navigation.canGoBack()) {
-                navigation.goBack();
+              navigation.goBack();
             } else {
-                navigation.navigate('Dashboard'); // Asegúrate que tu Home se llame así
+              navigation.navigate('CoachDashboard');
             }
-          }} 
-          style={styles.backButton}
+          }}
+          style={styles.headerIconBtn}
         >
-          <Ionicons name="arrow-back" size={28} color="#FFD700" />
+          <Ionicons name="arrow-back" size={25} color="#FFD700" />
         </TouchableOpacity>
-        
+
         <View style={styles.titleWrapper}>
-            <Text style={styles.headerTitle}>Gestión de Atletas</Text>
+          <Text style={styles.headerTitle}>
+            Gestión de Atletas
+          </Text>
         </View>
 
-        <TouchableOpacity onPress={signOut} style={styles.logoutButton}>
-          <Ionicons name="log-out-outline" size={26} color="#FFD700" />
+        <TouchableOpacity onPress={signOut} style={styles.headerIconBtn}>
+          <Ionicons name="log-out-outline" size={24} color="#FFD700" />
         </TouchableOpacity>
       </View>
 
       <View style={styles.searchSection}>
         <View style={styles.searchContainer}>
-          <Ionicons name="search-outline" size={20} color="#FFD700" /> 
+          <Ionicons name="search-outline" size={19} color="#FFD700" />
+
           <TextInput
             style={styles.searchInput}
             placeholder="Buscar atleta..."
@@ -114,111 +208,422 @@ export default function CoachStudentsScreen({ navigation }) {
             onChangeText={setSearch}
           />
         </View>
+
         <View style={styles.statsRow}>
-          <Text style={styles.statsText}>Total: {students.length} | Activos: {students.filter(s => s.status === 'Active').length}</Text>
+          <Text style={styles.statsText}>
+            Total: {students.length}
+          </Text>
+
+          <View style={styles.statsDivider} />
+
+          <Text style={styles.statsText}>
+            Activos: {activeCount}
+          </Text>
+
+          <View style={styles.statsDivider} />
+
+          <Text style={styles.statsText}>
+            Con período: {withPeriodCount}
+          </Text>
         </View>
       </View>
 
       <FlatList
         data={filteredStudents}
         keyExtractor={(item) => item.id}
+        contentContainerStyle={styles.list}
         renderItem={({ item }) => {
-            const isActive = item.status === 'Active';
-            return (
-              <View style={styles.row}>
-                <View style={styles.infoCol}>
-                  <Text style={styles.nameText}>{item.full_name}</Text>
-                  <Text style={styles.levelText}>{item.level}</Text>
-                </View>
-                <View style={styles.actionsCol}>
-                  <TouchableOpacity 
-                    style={[styles.statusToggle, { borderColor: isActive ? '#FFD700' : '#444' }]}
-                    onPress={() => toggleStatus(item.id, item.status)}
+          const isActive = item.status === 'Active';
+          const hasPeriod = hasCompletePeriod(item);
+
+          return (
+            <View style={styles.row}>
+              <View style={styles.topRow}>
+                <TouchableOpacity
+                  style={styles.infoCol}
+                  onPress={() => goToStudentDetail(item)}
+                  activeOpacity={0.85}
+                >
+                  <Text style={styles.nameText} numberOfLines={1}>
+                    {item.full_name}
+                  </Text>
+
+                  <Text style={styles.levelText}>
+                    {item.level || 'Sin nivel'} · {item.box_city || 'Sin ciudad'}
+                  </Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[
+                    styles.statusToggle,
+                    isActive ? styles.statusActive : styles.statusInactive,
+                  ]}
+                  onPress={() => toggleStatus(item.id, item.status)}
+                >
+                  <View
+                    style={[
+                      styles.statusDot,
+                      { backgroundColor: isActive ? '#FFD700' : '#666' },
+                    ]}
+                  />
+
+                  <Text
+                    style={[
+                      styles.statusLabel,
+                      { color: isActive ? '#FFD700' : '#666' },
+                    ]}
                   >
-                    <View style={[styles.statusDot, { backgroundColor: isActive ? '#FFD700' : '#666' }]} />
-                    <Text style={[styles.statusLabel, { color: isActive ? '#fff' : '#666' }]}>
-                      {isActive ? 'ACTIVO' : 'INACTIVO'}
-                    </Text>
-                  </TouchableOpacity>
+                    {isActive ? 'ACTIVO' : 'INACTIVO'}
+                  </Text>
+                </TouchableOpacity>
+              </View>
+
+              <View
+                style={[
+                  styles.periodBox,
+                  hasPeriod ? styles.periodBoxActive : styles.periodBoxWarning,
+                ]}
+              >
+                <Ionicons
+                  name={hasPeriod ? 'calendar-outline' : 'alert-circle-outline'}
+                  size={15}
+                  color={hasPeriod ? '#FFD700' : '#FFB800'}
+                />
+
+                <View style={styles.periodTextBox}>
+                  <Text
+                    style={[
+                      styles.periodText,
+                      !hasPeriod && styles.periodTextWarning,
+                    ]}
+                    numberOfLines={1}
+                  >
+                    {getPeriodText(item)}
+                  </Text>
+
+                  <Text style={styles.periodSubText} numberOfLines={1}>
+                    {getPeriodSubText(item)}
+                  </Text>
                 </View>
               </View>
-            );
+
+              <View style={styles.buttonsRow}>
+                <TouchableOpacity
+                  style={styles.secondaryBtn}
+                  onPress={() => goToStudentDetail(item)}
+                  activeOpacity={0.85}
+                >
+                  <Ionicons name="eye-outline" size={16} color="#BBB" />
+
+                  <Text style={styles.secondaryBtnText}>
+                    Ver detalle
+                  </Text>
+                </TouchableOpacity>
+
+                <TouchableOpacity
+                  style={[
+                    styles.primaryBtn,
+                    !hasPeriod && styles.primaryBtnHighlight,
+                  ]}
+                  onPress={() => goToPlanner(item)}
+                  activeOpacity={0.85}
+                >
+                  <Ionicons
+                    name="calendar-outline"
+                    size={16}
+                    color={hasPeriod ? '#FFD700' : '#000'}
+                  />
+
+                  <Text
+                    style={[
+                      styles.primaryBtnText,
+                      !hasPeriod && styles.primaryBtnTextHighlight,
+                    ]}
+                  >
+                    Configurar período
+                  </Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          );
         }}
-        contentContainerStyle={{ padding: 15 }}
+        ListEmptyComponent={
+          <View style={styles.emptyBox}>
+            <Ionicons name="people-outline" size={52} color="#333" />
+
+            <Text style={styles.emptyText}>
+              No se encontraron atletas.
+            </Text>
+          </View>
+        }
       />
     </SafeAreaView>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { 
-    flex: 1, 
+  container: {
+    flex: 1,
     backgroundColor: '#000',
-    paddingTop: Platform.OS === 'web' ? 0 : 30 // Evita que en web se baje el header
+    paddingTop: Platform.OS === 'web' ? 0 : 30,
   },
-  centered: { flex: 1, backgroundColor: '#000', justifyContent: 'center', alignItems: 'center' },
-  
+
+  centered: {
+    flex: 1,
+    backgroundColor: '#000',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+
   customHeader: {
     flexDirection: 'row',
     alignItems: 'center',
-    height: 65,
-    backgroundColor: '#000',
+    height: 60,
+    backgroundColor: '#050505',
     borderBottomWidth: 1,
-    borderBottomColor: '#222',
-    zIndex: 1000, // Vital para web
+    borderBottomColor: '#1A1A1A',
+    zIndex: 1000,
     elevation: 10,
   },
-  backButton: { 
-    paddingHorizontal: 20, 
-    height: '100%', 
+
+  headerIconBtn: {
+    width: 58,
+    height: '100%',
     justifyContent: 'center',
-    zIndex: 1001 
+    alignItems: 'center',
+    zIndex: 1001,
   },
-  logoutButton: { 
-    paddingHorizontal: 20, 
-    height: '100%', 
-    justifyContent: 'center',
-    zIndex: 1001 
-  },
+
   titleWrapper: {
     flex: 1,
     alignItems: 'center',
-    justifyContent: 'center'
+    justifyContent: 'center',
   },
-  headerTitle: { 
-    color: '#FFD700', 
-    fontSize: 18, 
-    fontWeight: 'bold',
-    textAlign: 'center'
+
+  headerTitle: {
+    color: '#FFD700',
+    fontSize: 16,
+    fontWeight: '900',
+    textAlign: 'center',
   },
-  searchSection: { padding: 15 },
-  searchContainer: { 
-    flexDirection: 'row', 
-    backgroundColor: '#111', 
-    borderRadius: 12, 
-    alignItems: 'center', 
-    paddingHorizontal: 15,
+
+  searchSection: {
+    paddingHorizontal: 14,
+    paddingTop: 14,
+    paddingBottom: 8,
+  },
+
+  searchContainer: {
+    flexDirection: 'row',
+    backgroundColor: '#0F0F0F',
+    borderRadius: 12,
+    alignItems: 'center',
+    paddingHorizontal: 14,
     borderWidth: 1,
-    borderColor: '#333'
+    borderColor: '#282828',
   },
-  searchInput: { color: '#fff', height: 50, flex: 1, marginLeft: 10 },
-  statsRow: { marginTop: 10, alignItems: 'center' },
-  statsText: { color: '#FFD700', fontSize: 12, fontWeight: 'bold' },
-  row: { 
-    flexDirection: 'row', 
-    backgroundColor: '#0a0a0a', 
-    padding: 16, 
-    borderRadius: 15, 
+
+  searchInput: {
+    color: '#fff',
+    height: 46,
+    flex: 1,
+    marginLeft: 10,
+    fontSize: 13,
+  },
+
+  statsRow: {
+    marginTop: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexDirection: 'row',
+  },
+
+  statsText: {
+    color: '#FFD700',
+    fontSize: 11,
+    fontWeight: '800',
+  },
+
+  statsDivider: {
+    width: 4,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: '#444',
+    marginHorizontal: 8,
+  },
+
+  list: {
+    padding: 14,
+    paddingTop: 22,
+    paddingBottom: 90,
+  },
+
+  row: {
+    backgroundColor: '#0B0B0B',
+    padding: 13,
+    borderRadius: 15,
     marginBottom: 12,
+    borderWidth: 1,
+    borderColor: '#1B1B1B',
+  },
+
+  topRow: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+  },
+
+  infoCol: {
+    flex: 1,
+    paddingRight: 12,
+  },
+
+  nameText: {
+    color: '#F5F5F5',
+    fontSize: 15,
+    fontWeight: '900',
+  },
+
+  levelText: {
+    color: '#777',
+    fontSize: 11,
+    marginTop: 3,
+    fontWeight: '600',
+  },
+
+  statusToggle: {
+    flexDirection: 'row',
     alignItems: 'center',
     borderWidth: 1,
-    borderColor: '#1a1a1a'
+    paddingVertical: 6,
+    paddingHorizontal: 9,
+    borderRadius: 10,
   },
-  infoCol: { flex: 2 },
-  actionsCol: { flex: 1, alignItems: 'flex-end' },
-  nameText: { color: '#fff', fontSize: 16, fontWeight: 'bold' },
-  levelText: { color: '#888', fontSize: 12 },
-  statusToggle: { flexDirection: 'row', alignItems: 'center', borderWidth: 1, paddingVertical: 8, paddingHorizontal: 10, borderRadius: 10 },
-  statusDot: { width: 8, height: 8, borderRadius: 4, marginRight: 6 },
-  statusLabel: { fontSize: 10, fontWeight: 'bold' }
+
+  statusActive: {
+    borderColor: '#5A4B00',
+    backgroundColor: '#111',
+  },
+
+  statusInactive: {
+    borderColor: '#333',
+    backgroundColor: '#0B0B0B',
+  },
+
+  statusDot: {
+    width: 7,
+    height: 7,
+    borderRadius: 4,
+    marginRight: 6,
+  },
+
+  statusLabel: {
+    fontSize: 9,
+    fontWeight: '900',
+  },
+
+  periodBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginTop: 9,
+    paddingVertical: 7,
+    paddingHorizontal: 10,
+    borderRadius: 10,
+    borderWidth: 1,
+  },
+
+  periodBoxActive: {
+    borderColor: '#2A2A2A',
+    backgroundColor: '#101010',
+  },
+
+  periodBoxWarning: {
+    borderColor: '#3A3200',
+    backgroundColor: '#100D00',
+  },
+
+  periodTextBox: {
+    flex: 1,
+    marginLeft: 8,
+  },
+
+  periodText: {
+    color: '#DDD',
+    fontSize: 11,
+    fontWeight: '900',
+  },
+
+  periodTextWarning: {
+    color: '#FFD700',
+  },
+
+  periodSubText: {
+    color: '#666',
+    fontSize: 10,
+    marginTop: 2,
+    fontWeight: '600',
+  },
+
+  buttonsRow: {
+    flexDirection: 'row',
+    marginTop: 10,
+  },
+
+  secondaryBtn: {
+    flex: 1,
+    borderWidth: 1,
+    borderColor: '#2A2A2A',
+    backgroundColor: '#101010',
+    borderRadius: 10,
+    paddingVertical: 9,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexDirection: 'row',
+  },
+
+  secondaryBtnText: {
+    color: '#BBB',
+    fontWeight: '800',
+    fontSize: 11,
+    marginLeft: 6,
+  },
+
+  primaryBtn: {
+    flex: 1,
+    marginLeft: 8,
+    backgroundColor: '#111',
+    borderWidth: 1,
+    borderColor: '#FFD700',
+    borderRadius: 10,
+    paddingVertical: 9,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexDirection: 'row',
+  },
+
+  primaryBtnHighlight: {
+    backgroundColor: '#E6C200',
+    borderColor: '#E6C200',
+  },
+
+  primaryBtnText: {
+    color: '#FFD700',
+    fontWeight: '900',
+    fontSize: 11,
+    marginLeft: 6,
+  },
+
+  primaryBtnTextHighlight: {
+    color: '#000',
+  },
+
+  emptyBox: {
+    alignItems: 'center',
+    marginTop: 80,
+  },
+
+  emptyText: {
+    color: '#666',
+    marginTop: 15,
+    fontSize: 16,
+  },
 });
