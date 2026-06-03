@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useLayoutEffect, useEffect } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import {
   View,
   Text,
@@ -9,7 +9,6 @@ import {
   Alert,
   TextInput,
   SafeAreaView,
-  Platform,
 } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 import { supabase } from '../../config/supabaseClient';
@@ -17,18 +16,12 @@ import { Ionicons } from '@expo/vector-icons';
 import { useAuth } from '../../contexts/AuthContext';
 
 export default function CoachStudentsScreen({ navigation }) {
-  const { profile, signOut } = useAuth();
+  const { profile } = useAuth();
 
   const [students, setStudents] = useState([]);
   const [filteredStudents, setFilteredStudents] = useState([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
-
-  useLayoutEffect(() => {
-    navigation.setOptions({
-      headerShown: false,
-    });
-  }, [navigation]);
 
   useFocusEffect(
     useCallback(() => {
@@ -86,7 +79,9 @@ export default function CoachStudentsScreen({ navigation }) {
 
     Alert.alert(
       'Cambiar estado',
-      `¿Quieres dejar este alumno como ${newStatus === 'Active' ? 'ACTIVO' : 'INACTIVO'}?`,
+      `¿Quieres dejar este alumno como ${
+        newStatus === 'Active' ? 'ACTIVO' : 'INACTIVO'
+      }?`,
       [
         {
           text: 'Cancelar',
@@ -136,9 +131,9 @@ export default function CoachStudentsScreen({ navigation }) {
   const hasCompletePeriod = (student) => {
     return Boolean(
       student.plan_start_date &&
-      student.plan_end_date &&
-      student.sessions_per_week &&
-      student.plan_weeks
+        student.plan_end_date &&
+        student.sessions_per_week &&
+        student.plan_weeks
     );
   };
 
@@ -158,8 +153,13 @@ export default function CoachStudentsScreen({ navigation }) {
     return `${student.sessions_per_week}x semana · ${student.plan_weeks} semanas`;
   };
 
-  const activeCount = students.filter((student) => student.status === 'Active').length;
-  const withPeriodCount = students.filter((student) => hasCompletePeriod(student)).length;
+  const activeCount = students.filter(
+    (student) => student.status === 'Active'
+  ).length;
+
+  const withPeriodCount = students.filter((student) =>
+    hasCompletePeriod(student)
+  ).length;
 
   if (loading) {
     return (
@@ -171,31 +171,6 @@ export default function CoachStudentsScreen({ navigation }) {
 
   return (
     <SafeAreaView style={styles.container}>
-      <View style={styles.customHeader}>
-        <TouchableOpacity
-          onPress={() => {
-            if (navigation.canGoBack()) {
-              navigation.goBack();
-            } else {
-              navigation.navigate('CoachDashboard');
-            }
-          }}
-          style={styles.headerIconBtn}
-        >
-          <Ionicons name="arrow-back" size={25} color="#FFD700" />
-        </TouchableOpacity>
-
-        <View style={styles.titleWrapper}>
-          <Text style={styles.headerTitle}>
-            Gestión de Atletas
-          </Text>
-        </View>
-
-        <TouchableOpacity onPress={signOut} style={styles.headerIconBtn}>
-          <Ionicons name="log-out-outline" size={24} color="#FFD700" />
-        </TouchableOpacity>
-      </View>
-
       <View style={styles.searchSection}>
         <View style={styles.searchContainer}>
           <Ionicons name="search-outline" size={19} color="#FFD700" />
@@ -365,7 +340,6 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#000',
-    paddingTop: Platform.OS === 'web' ? 0 : 30,
   },
 
   centered: {
@@ -375,41 +349,9 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
 
-  customHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    height: 60,
-    backgroundColor: '#050505',
-    borderBottomWidth: 1,
-    borderBottomColor: '#1A1A1A',
-    zIndex: 1000,
-    elevation: 10,
-  },
-
-  headerIconBtn: {
-    width: 58,
-    height: '100%',
-    justifyContent: 'center',
-    alignItems: 'center',
-    zIndex: 1001,
-  },
-
-  titleWrapper: {
-    flex: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-
-  headerTitle: {
-    color: '#FFD700',
-    fontSize: 16,
-    fontWeight: '900',
-    textAlign: 'center',
-  },
-
   searchSection: {
     paddingHorizontal: 14,
-    paddingTop: 14,
+    paddingTop: 16,
     paddingBottom: 8,
   },
 
@@ -432,7 +374,7 @@ const styles = StyleSheet.create({
   },
 
   statsRow: {
-    marginTop: 10,
+    marginTop: 12,
     alignItems: 'center',
     justifyContent: 'center',
     flexDirection: 'row',
@@ -454,7 +396,7 @@ const styles = StyleSheet.create({
 
   list: {
     padding: 14,
-    paddingTop: 22,
+    paddingTop: 20,
     paddingBottom: 90,
   },
 
