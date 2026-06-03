@@ -38,7 +38,7 @@ export default function CoachCalendarScreen({ navigation }) {
   const [currentYear, setCurrentYear] = useState(today.getFullYear());
 
   const [holidays, setHolidays] = useState({});
-  const [wodCountsByDate, setWodCountsByDate] = useState({});
+  const [wodsByDate, setWodsByDate] = useState({});
 
   const [loadingHolidays, setLoadingHolidays] = useState(false);
   const [loadingPlans, setLoadingPlans] = useState(false);
@@ -115,29 +115,59 @@ export default function CoachCalendarScreen({ navigation }) {
 
       const { data, error } = await supabase
         .from('plans')
-        .select('id, date, title, student_id, coach_id')
+        .select(`
+          id,
+          date,
+          title,
+          student_id,
+          coach_id,
+          source,
+          plan_type,
+          batch_id
+        `)
         .eq('coach_id', profile.id)
+        .eq('source', 'calendar_wod')
+        .eq('plan_type', 'wod')
         .gte('date', firstDay)
         .lte('date', lastDay)
         .not('date', 'is', null);
 
       if (error) throw error;
 
-      const counts = {};
+      const groupedByDate = {};
 
-      data.forEach((plan) => {
+      (data || []).forEach((plan) => {
         if (!plan.date) return;
 
-        if (!counts[plan.date]) {
-          counts[plan.date] = 0;
+        if (!groupedByDate[plan.date]) {
+          groupedByDate[plan.date] = {};
         }
 
-        counts[plan.date] += 1;
+        const groupKey =
+          plan.batch_id ||
+          `${plan.date}_${plan.title || 'sin_titulo'}_${plan.id}`;
+
+        if (!groupedByDate[plan.date][groupKey]) {
+          groupedByDate[plan.date][groupKey] = {
+            title: plan.title || 'WOD sin título',
+          };
+        }
       });
 
-      setWodCountsByDate(counts);
+      const finalMap = {};
+
+      Object.keys(groupedByDate).forEach((date) => {
+        const wodGroups = Object.values(groupedByDate[date]);
+
+        finalMap[date] = {
+          count: wodGroups.length,
+          titles: wodGroups.map((wod) => wod.title),
+        };
+      });
+
+      setWodsByDate(finalMap);
     } catch (error) {
-      console.error('Error cargando planes del mes:', error.message);
+      console.error('Error cargando WODs del mes:', error.message);
 
       Alert.alert(
         'Error',
@@ -154,8 +184,6 @@ export default function CoachCalendarScreen({ navigation }) {
 
     const totalDays = lastDayOfMonth.getDate();
 
-    // getDay(): domingo = 0, lunes = 1.
-    // Queremos lunes como primer día.
     const firstWeekDay = firstDayOfMonth.getDay();
     const emptyDaysBefore = firstWeekDay === 0 ? 6 : firstWeekDay - 1;
 
@@ -170,6 +198,7 @@ export default function CoachCalendarScreen({ navigation }) {
 
     for (let day = 1; day <= totalDays; day++) {
       const date = formatDate(currentYear, currentMonth, day);
+      const wodData = wodsByDate[date];
 
       days.push({
         type: 'day',
@@ -177,12 +206,13 @@ export default function CoachCalendarScreen({ navigation }) {
         day,
         date,
         holidayName: holidays[date],
-        wodCount: wodCountsByDate[date] || 0,
+        wodCount: wodData?.count || 0,
+        wodTitles: wodData?.titles || [],
       });
     }
 
     return days;
-  }, [currentMonth, currentYear, holidays, wodCountsByDate]);
+  }, [currentMonth, currentYear, holidays, wodsByDate]);
 
   const goToPreviousMonth = () => {
     if (currentMonth === 0) {
@@ -219,6 +249,9 @@ export default function CoachCalendarScreen({ navigation }) {
     const isHoliday = Boolean(item.holidayName);
     const hasWods = item.wodCount > 0;
 
+    const visibleTitles = item.wodTitles?.slice(0, 2) || [];
+    const remainingCount = (item.wodTitles?.length || 0) - visibleTitles.length;
+
     return (
       <TouchableOpacity
         key={item.key}
@@ -249,7 +282,7 @@ export default function CoachCalendarScreen({ navigation }) {
           )}
         </View>
 
-        {isHoliday ? (
+        {isHoliday && (
           <View style={styles.holidayBox}>
             <Text style={styles.holidayLabel}>
               FERIADO
@@ -257,16 +290,32 @@ export default function CoachCalendarScreen({ navigation }) {
 
             <Text
               style={styles.holidayName}
-              numberOfLines={2}
+              numberOfLines={1}
             >
               {item.holidayName}
             </Text>
           </View>
-        ) : hasWods ? (
-          <Text style={styles.wodText}>
-            PLANES
-          </Text>
-        ) : null}
+        )}
+
+        {hasWods && (
+          <View style={styles.wodList}>
+            {visibleTitles.map((title, index) => (
+              <Text
+                key={`${item.date}-wod-${index}`}
+                style={styles.wodItem}
+                numberOfLines={1}
+              >
+                {title}
+              </Text>
+            ))}
+
+            {remainingCount > 0 && (
+              <Text style={styles.moreText}>
+                +{remainingCount} más
+              </Text>
+            )}
+          </View>
+        )}
       </TouchableOpacity>
     );
   };
@@ -345,7 +394,7 @@ export default function CoachCalendarScreen({ navigation }) {
         <View style={styles.legendItem}>
           <View style={styles.legendDotGold} />
           <Text style={styles.legendText}>
-            Día con planes/WODs
+            Día con WODs
           </Text>
         </View>
 
@@ -442,13 +491,13 @@ const styles = StyleSheet.create({
 
   emptyDay: {
     width: `${100 / 7}%`,
-    height: 72,
+    height: 110,
     padding: 3,
   },
 
   dayCell: {
     width: `${100 / 7}%`,
-    height: 72,
+    height: 110,
     padding: 6,
     backgroundColor: '#0D0D0D',
     borderWidth: 1,
@@ -459,6 +508,7 @@ const styles = StyleSheet.create({
 
   hasWodCell: {
     borderColor: '#FFD700',
+    backgroundColor: '#0F0E05',
   },
 
   holidayCell: {
@@ -498,15 +548,8 @@ const styles = StyleSheet.create({
     fontWeight: '900',
   },
 
-  wodText: {
-    color: '#FFD700',
-    fontSize: 9,
-    fontWeight: 'bold',
-    marginTop: 10,
-  },
-
   holidayBox: {
-    marginTop: 5,
+    marginTop: 4,
   },
 
   holidayLabel: {
@@ -520,6 +563,28 @@ const styles = StyleSheet.create({
     fontSize: 7,
     marginTop: 2,
     lineHeight: 9,
+  },
+
+  wodList: {
+    marginTop: 7,
+  },
+
+  wodItem: {
+    color: '#FFD700',
+    fontSize: 9,
+    fontWeight: '900',
+    backgroundColor: '#1A1A1A',
+    borderRadius: 5,
+    paddingHorizontal: 5,
+    paddingVertical: 2,
+    marginBottom: 4,
+  },
+
+  moreText: {
+    color: '#AAA',
+    fontSize: 8,
+    fontWeight: 'bold',
+    marginTop: 1,
   },
 
   legend: {

@@ -30,6 +30,8 @@ export default function CoachDayEditor({ route, navigation }) {
   const isCreateMultiple = mode === 'create-multiple';
   const selectedDate = date || plan?.date || null;
 
+  const [currentBatchId, setCurrentBatchId] = useState(plan?.batch_id || null);
+
   const [loading, setLoading] = useState(false);
   const [assigning, setAssigning] = useState(false);
   const [loadingStudents, setLoadingStudents] = useState(false);
@@ -39,8 +41,21 @@ export default function CoachDayEditor({ route, navigation }) {
   const [sections, setSections] = useState([]);
 
   const [studentsModalVisible, setStudentsModalVisible] = useState(false);
+  const [studentsModalMode, setStudentsModalMode] = useState('initial');
+
   const [activeStudents, setActiveStudents] = useState([]);
   const [selectedStudentIds, setSelectedStudentIds] = useState([]);
+  const [originalAssignedStudentIds, setOriginalAssignedStudentIds] = useState([]);
+  const [assignedPlansByStudent, setAssignedPlansByStudent] = useState({});
+
+  const canManageWodStudents =
+    !!plan?.id &&
+    !!selectedDate &&
+    (
+      plan?.source === 'calendar_wod' ||
+      plan?.plan_type === 'wod' ||
+      !!plan?.batch_id
+    );
 
   useEffect(() => {
     try {
@@ -100,41 +115,17 @@ export default function CoachDayEditor({ route, navigation }) {
     studentsModalVisible,
   ]);
 
-  const addSection = () => {
-    const nextLetter = String.fromCharCode(65 + sections.length);
+  const generateUuid = () => {
+    if (typeof crypto !== 'undefined' && crypto.randomUUID) {
+      return crypto.randomUUID();
+    }
 
-    setSections([
-      ...sections,
-      {
-        id: Math.random().toString(),
-        name: `${nextLetter}) SECCIÓN`,
-        content: '',
-      },
-    ]);
+    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+      const r = Math.random() * 16 | 0;
+      const v = c === 'x' ? r : (r & 0x3 | 0x8);
 
-    setHasChanges(true);
-  };
-
-  const removeSection = (id) => {
-    if (sections.length <= 1) return;
-
-    setSections(sections.filter((s) => s.id !== id));
-    setHasChanges(true);
-  };
-
-  const updateSection = (id, field, value) => {
-    setSections(
-      sections.map((s) =>
-        s.id === id
-          ? {
-              ...s,
-              [field]: value,
-            }
-          : s
-      )
-    );
-
-    setHasChanges(true);
+      return v.toString(16);
+    });
   };
 
   const getFormattedSections = () => {
@@ -175,33 +166,89 @@ export default function CoachDayEditor({ route, navigation }) {
     return d.getFullYear();
   };
 
-  const loadActiveStudents = async () => {
+  const addSection = () => {
+    const nextLetter = String.fromCharCode(65 + sections.length);
+
+    setSections([
+      ...sections,
+      {
+        id: Math.random().toString(),
+        name: `${nextLetter}) SECCIÓN`,
+        content: '',
+      },
+    ]);
+
+    setHasChanges(true);
+  };
+
+  const removeSection = (id) => {
+    if (sections.length <= 1) return;
+
+    setSections(sections.filter((s) => s.id !== id));
+    setHasChanges(true);
+  };
+
+  const updateSection = (id, field, value) => {
+    setSections(
+      sections.map((s) =>
+        s.id === id
+          ? {
+              ...s,
+              [field]: value,
+            }
+          : s
+      )
+    );
+
+    setHasChanges(true);
+  };
+
+  const loadStudentsWithActivePeriod = async () => {
+    if (!profile?.id) {
+      Alert.alert('Error', 'No se encontró el perfil del coach.');
+      return [];
+    }
+
+    if (!selectedDate) {
+      Alert.alert('Error', 'No se encontró la fecha del WOD.');
+      return [];
+    }
+
+    const { data, error } = await supabase
+      .from('profiles')
+      .select(`
+        id,
+        full_name,
+        level,
+        status,
+        plan_start_date,
+        plan_end_date,
+        sessions_per_week,
+        plan_weeks
+      `)
+      .eq('role', 'alumno')
+      .eq('coach_id', profile.id)
+      .eq('status', 'Active')
+      .lte('plan_start_date', selectedDate)
+      .gte('plan_end_date', selectedDate)
+      .order('full_name', { ascending: true });
+
+    if (error) throw error;
+
+    return data || [];
+  };
+
+  const loadActiveStudentsForInitialAssign = async () => {
     try {
-      if (!profile?.id) {
-        Alert.alert('Error', 'No se encontró el perfil del coach.');
-        return;
-      }
-
-      if (!selectedDate) {
-        Alert.alert('Error', 'No se encontró la fecha del WOD.');
-        return;
-      }
-
       setLoadingStudents(true);
 
-      const { data, error } = await supabase
-        .from('profiles')
-        .select('id, full_name, level, plan_end_date, status')
-        .eq('role', 'alumno')
-        .eq('coach_id', profile.id)
-        .eq('status', 'Active')
-        .gte('plan_end_date', selectedDate)
-        .order('full_name', { ascending: true });
+      const students = await loadStudentsWithActivePeriod();
 
-      if (error) throw error;
-
-      setActiveStudents(data || []);
+      setActiveStudents(students);
       setSelectedStudentIds([]);
+      setOriginalAssignedStudentIds([]);
+      setAssignedPlansByStudent({});
+      setStudentsModalMode('initial');
       setStudentsModalVisible(true);
     } catch (error) {
       console.error('Error cargando alumnos activos:', error.message);
@@ -209,6 +256,123 @@ export default function CoachDayEditor({ route, navigation }) {
       Alert.alert(
         'Error',
         'No se pudieron cargar los alumnos activos.'
+      );
+    } finally {
+      setLoadingStudents(false);
+    }
+  };
+
+  const ensureBatchIdForCurrentPlan = async () => {
+    if (currentBatchId) {
+      return currentBatchId;
+    }
+
+    if (!plan?.id) {
+      const newBatchId = generateUuid();
+      setCurrentBatchId(newBatchId);
+      return newBatchId;
+    }
+
+    const newBatchId = generateUuid();
+
+    const { error } = await supabase
+      .from('plans')
+      .update({
+        batch_id: newBatchId,
+        source: 'calendar_wod',
+        plan_type: 'wod',
+        created_from: 'calendar_v2',
+      })
+      .eq('id', plan.id);
+
+    if (error) throw error;
+
+    setCurrentBatchId(newBatchId);
+    return newBatchId;
+  };
+
+  const loadStudentsForManageWod = async () => {
+    try {
+      if (!plan?.id) {
+        Alert.alert('Error', 'No se encontró el WOD actual.');
+        return;
+      }
+
+      setLoadingStudents(true);
+
+      const batchId = await ensureBatchIdForCurrentPlan();
+
+      const { data: assignedPlans, error: assignedError } = await supabase
+        .from('plans')
+        .select('id, student_id')
+        .eq('coach_id', profile.id)
+        .eq('date', selectedDate)
+        .eq('batch_id', batchId)
+        .eq('source', 'calendar_wod')
+        .eq('plan_type', 'wod');
+
+      if (assignedError) throw assignedError;
+
+      const assignedMap = {};
+      const assignedIds = [];
+
+      (assignedPlans || []).forEach((assignedPlan) => {
+        if (assignedPlan.student_id) {
+          assignedMap[assignedPlan.student_id] = assignedPlan.id;
+          assignedIds.push(assignedPlan.student_id);
+        }
+      });
+
+      let assignedProfiles = [];
+
+      if (assignedIds.length > 0) {
+        const { data, error } = await supabase
+          .from('profiles')
+          .select(`
+            id,
+            full_name,
+            level,
+            status,
+            plan_start_date,
+            plan_end_date,
+            sessions_per_week,
+            plan_weeks
+          `)
+          .in('id', assignedIds);
+
+        if (error) throw error;
+
+        assignedProfiles = data || [];
+      }
+
+      const activePeriodStudents = await loadStudentsWithActivePeriod();
+
+      const mergedMap = {};
+
+      assignedProfiles.forEach((student) => {
+        mergedMap[student.id] = student;
+      });
+
+      activePeriodStudents.forEach((student) => {
+        mergedMap[student.id] = student;
+      });
+
+      const mergedStudents = Object.values(mergedMap).sort((a, b) =>
+        (a.full_name || '').localeCompare(b.full_name || '')
+      );
+
+      setActiveStudents(mergedStudents);
+      setOriginalAssignedStudentIds(assignedIds);
+      setSelectedStudentIds(assignedIds);
+      setAssignedPlansByStudent(assignedMap);
+      setStudentsModalMode('manage');
+      setStudentsModalVisible(true);
+    } catch (error) {
+      console.error('Error gestionando alumnos del WOD:', error.message);
+
+      Alert.alert(
+        'Error',
+        'No se pudieron cargar los alumnos asignados al WOD.'
       );
     } finally {
       setLoadingStudents(false);
@@ -247,7 +411,6 @@ export default function CoachDayEditor({ route, navigation }) {
     try {
       const formattedSections = getFormattedSections();
 
-      // CASO 1: editar un plan existente
       if (plan?.id) {
         const { error } = await supabase
           .from('plans')
@@ -265,9 +428,8 @@ export default function CoachDayEditor({ route, navigation }) {
         return;
       }
 
-      // CASO 2: crear WOD desde Calendario V2 y luego asignar alumnos
       if (isCreateMultiple) {
-        await loadActiveStudents();
+        await loadActiveStudentsForInitialAssign();
         setLoading(false);
         return;
       }
@@ -284,6 +446,28 @@ export default function CoachDayEditor({ route, navigation }) {
 
       Alert.alert('Error', 'No se pudo guardar');
     }
+  };
+
+  const buildPlanPayload = (studentId, batchId) => {
+    const formattedSections = getFormattedSections();
+
+    return {
+      student_id: studentId,
+      coach_id: profile.id,
+      date: selectedDate,
+      title: title.trim(),
+      sections: formattedSections,
+      is_done: false,
+
+      source: 'calendar_wod',
+      plan_type: 'wod',
+      created_from: 'calendar_v2',
+      batch_id: batchId,
+
+      month: getMonthNumber(selectedDate),
+      year: getYearNumber(selectedDate),
+      day_name: getDayName(selectedDate),
+    };
   };
 
   const handleAssignWod = async () => {
@@ -308,19 +492,11 @@ export default function CoachDayEditor({ route, navigation }) {
     setAssigning(true);
 
     try {
-      const formattedSections = getFormattedSections();
+      const batchId = generateUuid();
 
-      const payload = selectedStudentIds.map((studentId) => ({
-        student_id: studentId,
-        coach_id: profile.id,
-        date: selectedDate,
-        title: title.trim(),
-        sections: formattedSections,
-        is_done: false,
-        month: getMonthNumber(selectedDate),
-        year: getYearNumber(selectedDate),
-        day_name: getDayName(selectedDate),
-      }));
+      const payload = selectedStudentIds.map((studentId) =>
+        buildPlanPayload(studentId, batchId)
+      );
 
       const { error } = await supabase
         .from('plans')
@@ -352,6 +528,146 @@ export default function CoachDayEditor({ route, navigation }) {
       setAssigning(false);
     }
   };
+
+  const handleSaveManagedStudents = async () => {
+    if (!profile?.id || !selectedDate) {
+      Alert.alert('Error', 'Faltan datos para guardar los cambios.');
+      return;
+    }
+
+    setAssigning(true);
+
+    try {
+      const batchId = await ensureBatchIdForCurrentPlan();
+
+      const originalSet = new Set(originalAssignedStudentIds);
+      const selectedSet = new Set(selectedStudentIds);
+
+      const toAdd = selectedStudentIds.filter((id) => !originalSet.has(id));
+      const toRemove = originalAssignedStudentIds.filter((id) => !selectedSet.has(id));
+
+      if (toAdd.length === 0 && toRemove.length === 0) {
+        setStudentsModalVisible(false);
+        Alert.alert('Sin cambios', 'No se realizaron cambios en los alumnos del WOD.');
+        return;
+      }
+
+      if (toAdd.length > 0) {
+        const payload = toAdd.map((studentId) =>
+          buildPlanPayload(studentId, batchId)
+        );
+
+        const { error: insertError } = await supabase
+          .from('plans')
+          .insert(payload);
+
+        if (insertError) throw insertError;
+      }
+
+      if (toRemove.length > 0) {
+        const { error: deleteError } = await supabase
+          .from('plans')
+          .delete()
+          .eq('coach_id', profile.id)
+          .eq('date', selectedDate)
+          .eq('batch_id', batchId)
+          .in('student_id', toRemove);
+
+        if (deleteError) throw deleteError;
+      }
+
+      setStudentsModalVisible(false);
+
+      const removedCurrentPlan =
+        plan?.student_id &&
+        toRemove.includes(plan.student_id);
+
+      Alert.alert(
+        'Alumnos actualizados',
+        `Agregados: ${toAdd.length}\nQuitados: ${toRemove.length}`,
+        [
+          {
+            text: 'OK',
+            onPress: () => {
+              if (removedCurrentPlan) {
+                navigation.goBack();
+              }
+            },
+          },
+        ]
+      );
+    } catch (error) {
+      console.error('Error guardando alumnos del WOD:', error.message || error);
+
+      Alert.alert(
+        'Error',
+        'No se pudieron guardar los cambios de alumnos.'
+      );
+    } finally {
+      setAssigning(false);
+    }
+  };
+
+  const getStudentStatusLabel = (student) => {
+    const wasAssigned = originalAssignedStudentIds.includes(student.id);
+    const isSelected = selectedStudentIds.includes(student.id);
+
+    if (studentsModalMode === 'manage') {
+      if (wasAssigned && isSelected) return 'Ya asignado';
+      if (wasAssigned && !isSelected) return 'Se quitará';
+      if (!wasAssigned && isSelected) return 'Nuevo';
+    }
+
+    return student.plan_end_date
+      ? `Plan hasta ${student.plan_end_date}`
+      : 'Sin fecha';
+  };
+
+  const getStudentIconName = (student) => {
+    const isSelected = selectedStudentIds.includes(student.id);
+    const wasAssigned = originalAssignedStudentIds.includes(student.id);
+
+    if (studentsModalMode === 'manage' && wasAssigned && !isSelected) {
+      return 'remove-circle';
+    }
+
+    return isSelected ? 'checkmark-circle' : 'ellipse-outline';
+  };
+
+  const getStudentIconColor = (student) => {
+    const isSelected = selectedStudentIds.includes(student.id);
+    const wasAssigned = originalAssignedStudentIds.includes(student.id);
+
+    if (studentsModalMode === 'manage' && wasAssigned && !isSelected) {
+      return '#FF4D4D';
+    }
+
+    return isSelected ? '#FFD700' : '#555';
+  };
+
+  const handleModalSave = () => {
+    if (studentsModalMode === 'manage') {
+      handleSaveManagedStudents();
+      return;
+    }
+
+    handleAssignWod();
+  };
+
+  const modalTitle =
+    studentsModalMode === 'manage'
+      ? 'Gestionar alumnos'
+      : 'Seleccionar alumnos';
+
+  const modalSubtitle =
+    studentsModalMode === 'manage'
+      ? `Marca o desmarca alumnos para este WOD del ${selectedDate}.`
+      : `Solo aparecen alumnos con período activo para la fecha ${selectedDate}.`;
+
+  const modalButtonText =
+    studentsModalMode === 'manage'
+      ? 'GUARDAR CAMBIOS'
+      : `ASIGNAR WOD A ${selectedStudentIds.length} ALUMNO${selectedStudentIds.length === 1 ? '' : 'S'}`;
 
   return (
     <View style={styles.container}>
@@ -427,6 +743,25 @@ export default function CoachDayEditor({ route, navigation }) {
             placeholder="Ej: Empuje - Fuerza"
             placeholderTextColor="#444"
           />
+
+          {canManageWodStudents && (
+            <TouchableOpacity
+              style={styles.manageStudentsBtn}
+              onPress={loadStudentsForManageWod}
+              disabled={loadingStudents}
+              activeOpacity={0.85}
+            >
+              <Ionicons
+                name="people-outline"
+                size={21}
+                color="#FFD700"
+              />
+
+              <Text style={styles.manageStudentsText}>
+                GESTIONAR ALUMNOS DEL WOD
+              </Text>
+            </TouchableOpacity>
+          )}
 
           <Text style={styles.label}>
             BLOQUES DE TRABAJO
@@ -522,11 +857,11 @@ export default function CoachDayEditor({ route, navigation }) {
             <View style={styles.modalHeader}>
               <View>
                 <Text style={styles.modalLabel}>
-                  ASIGNAR WOD
+                  {studentsModalMode === 'manage' ? 'ALUMNOS DEL WOD' : 'ASIGNAR WOD'}
                 </Text>
 
                 <Text style={styles.modalTitle}>
-                  Seleccionar alumnos
+                  {modalTitle}
                 </Text>
               </View>
 
@@ -542,7 +877,7 @@ export default function CoachDayEditor({ route, navigation }) {
             </View>
 
             <Text style={styles.modalSubtitle}>
-              Solo aparecen alumnos activos con plan vigente hasta {selectedDate}.
+              {modalSubtitle}
             </Text>
 
             {activeStudents.length > 0 && (
@@ -568,7 +903,7 @@ export default function CoachDayEditor({ route, navigation }) {
                   />
 
                   <Text style={styles.emptyStudentsText}>
-                    No hay alumnos activos para esta fecha.
+                    No hay alumnos disponibles para esta fecha.
                   </Text>
                 </View>
               ) : (
@@ -581,6 +916,10 @@ export default function CoachDayEditor({ route, navigation }) {
                       style={[
                         styles.studentOption,
                         isSelected && styles.studentOptionSelected,
+                        studentsModalMode === 'manage' &&
+                          originalAssignedStudentIds.includes(student.id) &&
+                          !isSelected &&
+                          styles.studentOptionRemove,
                       ]}
                       onPress={() => toggleStudent(student.id)}
                       activeOpacity={0.85}
@@ -597,18 +936,14 @@ export default function CoachDayEditor({ route, navigation }) {
                         </Text>
 
                         <Text style={styles.studentSub}>
-                          {student.level || 'Sin nivel'} · Plan hasta {student.plan_end_date || 'sin fecha'}
+                          {student.level || 'Sin nivel'} · {getStudentStatusLabel(student)}
                         </Text>
                       </View>
 
                       <Ionicons
-                        name={
-                          isSelected
-                            ? 'checkmark-circle'
-                            : 'ellipse-outline'
-                        }
+                        name={getStudentIconName(student)}
                         size={24}
-                        color={isSelected ? '#FFD700' : '#555'}
+                        color={getStudentIconColor(student)}
                       />
                     </TouchableOpacity>
                   );
@@ -620,17 +955,17 @@ export default function CoachDayEditor({ route, navigation }) {
               style={[
                 styles.assignBtn,
                 (assigning || selectedStudentIds.length === 0) && {
-                  opacity: 0.6,
+                  opacity: studentsModalMode === 'manage' ? 1 : 0.6,
                 },
               ]}
-              onPress={handleAssignWod}
-              disabled={assigning || selectedStudentIds.length === 0}
+              onPress={handleModalSave}
+              disabled={assigning || (studentsModalMode !== 'manage' && selectedStudentIds.length === 0)}
             >
               {assigning ? (
                 <ActivityIndicator color="#000" />
               ) : (
                 <Text style={styles.assignBtnText}>
-                  ASIGNAR WOD A {selectedStudentIds.length} ALUMNO{selectedStudentIds.length === 1 ? '' : 'S'}
+                  {modalButtonText}
                 </Text>
               )}
             </TouchableOpacity>
@@ -718,9 +1053,29 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     fontSize: 18,
     fontWeight: 'bold',
-    marginBottom: 25,
+    marginBottom: 15,
     borderWidth: 1,
     borderColor: '#1a1a1a',
+  },
+
+  manageStudentsBtn: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#111',
+    borderWidth: 1,
+    borderColor: '#FFD70055',
+    paddingVertical: 14,
+    borderRadius: 14,
+    marginBottom: 25,
+  },
+
+  manageStudentsText: {
+    color: '#FFD700',
+    fontWeight: '900',
+    marginLeft: 8,
+    fontSize: 12,
+    letterSpacing: 0.8,
   },
 
   sectionCard: {
@@ -880,6 +1235,11 @@ const styles = StyleSheet.create({
   studentOptionSelected: {
     borderColor: '#FFD700',
     backgroundColor: '#191600',
+  },
+
+  studentOptionRemove: {
+    borderColor: '#FF4D4D',
+    backgroundColor: '#190707',
   },
 
   studentAvatar: {

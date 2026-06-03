@@ -4,12 +4,12 @@ import {
   Text,
   StyleSheet,
   TouchableOpacity,
-  ActivityIndicator,
   ScrollView,
-  Alert,
+  ActivityIndicator,
+  RefreshControl,
 } from 'react-native';
-import { useFocusEffect } from '@react-navigation/native';
 import { Ionicons } from '@expo/vector-icons';
+import { useFocusEffect } from '@react-navigation/native';
 import { supabase } from '../../config/supabaseClient';
 import { useAuth } from '../../contexts/AuthContext';
 
@@ -19,23 +19,26 @@ export default function CoachDayPlansScreen({ route, navigation }) {
   const {
     date,
     holidayName = null,
-  } = route.params;
+  } = route.params || {};
 
   const [loading, setLoading] = useState(true);
-  const [planGroups, setPlanGroups] = useState([]);
-  const [expandedGroup, setExpandedGroup] = useState(null);
+  const [refreshing, setRefreshing] = useState(false);
+  const [wodGroups, setWodGroups] = useState([]);
+  const [expandedGroups, setExpandedGroups] = useState({});
 
   useFocusEffect(
     useCallback(() => {
       if (profile?.id && date) {
-        loadPlansForDay();
+        fetchDayPlans();
       }
     }, [profile?.id, date])
   );
 
-  const loadPlansForDay = async () => {
+  const fetchDayPlans = async () => {
     try {
-      setLoading(true);
+      if (!refreshing) {
+        setLoading(true);
+      }
 
       const { data: plans, error: plansError } = await supabase
         .from('plans')
@@ -45,30 +48,33 @@ export default function CoachDayPlansScreen({ route, navigation }) {
           coach_id,
           date,
           title,
-          warmup,
-          work1,
-          work2,
-          wod,
-          cooldown,
-          video_url,
-          is_done,
-          week_number,
-          month,
-          year,
           sections,
           blocks,
-          end_date,
+          is_done,
+          source,
+          plan_type,
+          created_from,
+          batch_id,
+          month,
+          year,
           day_name
         `)
         .eq('coach_id', profile.id)
         .eq('date', date)
-        .order('title', { ascending: true });
+        .eq('source', 'calendar_wod')
+        .eq('plan_type', 'wod')
+        .order('title', { ascending: true })
+        .order('id', { ascending: true });
 
-      if (plansError) throw plansError;
+      if (plansError) {
+        throw plansError;
+      }
+
+      const cleanPlans = plans || [];
 
       const studentIds = [
         ...new Set(
-          (plans || [])
+          cleanPlans
             .map((plan) => plan.student_id)
             .filter(Boolean)
         ),
@@ -79,10 +85,21 @@ export default function CoachDayPlansScreen({ route, navigation }) {
       if (studentIds.length > 0) {
         const { data: students, error: studentsError } = await supabase
           .from('profiles')
-          .select('id, full_name, level, plan_end_date')
+          .select(`
+            id,
+            full_name,
+            level,
+            status,
+            plan_start_date,
+            plan_end_date,
+            sessions_per_week,
+            plan_weeks
+          `)
           .in('id', studentIds);
 
-        if (studentsError) throw studentsError;
+        if (studentsError) {
+          throw studentsError;
+        }
 
         studentsMap = (students || []).reduce((acc, student) => {
           acc[student.id] = student;
@@ -90,186 +107,267 @@ export default function CoachDayPlansScreen({ route, navigation }) {
         }, {});
       }
 
-      const grouped = {};
+      const enrichedPlans = cleanPlans.map((plan) => ({
+        ...plan,
+        student_profile: studentsMap[plan.student_id] || null,
+      }));
 
-      (plans || []).forEach((plan) => {
-        const groupKey = plan.title || 'Sin título';
+      const groupsMap = {};
 
-        if (!grouped[groupKey]) {
-          grouped[groupKey] = {
-            title: groupKey,
+      enrichedPlans.forEach((plan) => {
+        const groupKey =
+          plan.batch_id ||
+          `single_${plan.date}_${plan.title || 'sin_titulo'}_${plan.id}`;
+
+        if (!groupsMap[groupKey]) {
+          groupsMap[groupKey] = {
+            key: groupKey,
+            batch_id: plan.batch_id,
+            title: plan.title || 'WOD sin título',
+            date: plan.date,
             plans: [],
           };
         }
 
-        grouped[groupKey].plans.push({
-          ...plan,
-          student: studentsMap[plan.student_id] || null,
-        });
+        groupsMap[groupKey].plans.push(plan);
       });
 
-      setPlanGroups(Object.values(grouped));
-    } catch (error) {
-      console.error('Error cargando planes del día:', error.message);
+      const groups = Object.values(groupsMap)
+        .map((group) => ({
+          ...group,
+          plans: group.plans.sort((a, b) => {
+            const nameA = a.student_profile?.full_name || '';
+            const nameB = b.student_profile?.full_name || '';
+            return nameA.localeCompare(nameB);
+          }),
+        }))
+        .sort((a, b) => a.title.localeCompare(b.title));
 
-      Alert.alert(
-        'Error',
-        'No se pudieron cargar los planes de este día.'
-      );
+      setWodGroups(groups);
+
+      setExpandedGroups((current) => {
+        if (Object.keys(current).length > 0) {
+          return current;
+        }
+
+        if (groups.length === 0) {
+          return {};
+        }
+
+        return {
+          [groups[0].key]: true,
+        };
+      });
+    } catch (error) {
+      console.error('Error cargando WODs del día:', error.message);
     } finally {
       setLoading(false);
+      setRefreshing(false);
     }
   };
 
-  const toggleGroup = (title) => {
-    setExpandedGroup((current) => (
-      current === title ? null : title
-    ));
+  const onRefresh = () => {
+    setRefreshing(true);
+    fetchDayPlans();
   };
 
-  const handleOpenStudentPlan = (plan) => {
+  const toggleGroup = (groupKey) => {
+    setExpandedGroups((current) => ({
+      ...current,
+      [groupKey]: !current[groupKey],
+    }));
+  };
+
+  const openWodGroup = (group) => {
+    if (!group?.plans?.length) return;
+
     navigation.navigate('DayDetail', {
-      plan,
+      plan: group.plans[0],
       date,
+      mode: 'manage-wod',
+      holidayName,
     });
   };
 
-  const handleNewWod = () => {
+  const openStudentPlan = (plan) => {
     navigation.navigate('DayDetail', {
+      plan,
       date,
       holidayName,
-      mode: 'create-multiple',
+    });
+  };
+
+  const goToNewWod = () => {
+    navigation.navigate('DayDetail', {
       plan: {
         id: null,
         title: '',
         sections: [],
-        blocks: [],
-        date,
+        source: 'calendar_wod',
+        plan_type: 'wod',
       },
+      date,
+      mode: 'create-multiple',
+      holidayName,
     });
   };
+
+  const getInitial = (name) => {
+    return name?.charAt(0)?.toUpperCase() || '?';
+  };
+
+  const getStudentsCountText = (count) => {
+    if (count === 1) {
+      return '1 alumno asignado';
+    }
+
+    return `${count} alumnos asignados`;
+  };
+
+  if (loading && !refreshing) {
+    return (
+      <View style={styles.container}>
+        <ActivityIndicator
+          color="#FFD700"
+          size="large"
+          style={{ marginTop: 80 }}
+        />
+      </View>
+    );
+  }
 
   return (
     <View style={styles.container}>
       <ScrollView
-        contentContainerStyle={styles.scroll}
-        showsVerticalScrollIndicator={false}
+        contentContainerStyle={styles.scrollContent}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={onRefresh}
+            tintColor="#FFD700"
+          />
+        }
       >
-        <View style={styles.headerBox}>
-          <Text style={styles.label}>
+        <View style={styles.headerBlock}>
+          <Text style={styles.headerLabel}>
             PLANES DEL DÍA
           </Text>
 
-          <Text style={styles.title}>
+          <Text style={styles.dateTitle}>
             {date}
           </Text>
 
-          {holidayName && (
-            <View style={styles.holidayBanner}>
+          {holidayName && holidayName !== 'null' && (
+            <View style={styles.holidayBox}>
               <Ionicons
                 name="alert-circle-outline"
-                size={22}
+                size={18}
                 color="#FF4D4D"
               />
 
-              <View style={styles.holidayTextBox}>
-                <Text style={styles.holidayTitle}>
-                  FERIADO
-                </Text>
-
-                <Text style={styles.holidayText}>
-                  {holidayName}
-                </Text>
-              </View>
+              <Text style={styles.holidayText}>
+                Feriado: {holidayName}
+              </Text>
             </View>
           )}
         </View>
 
-        {loading ? (
-          <ActivityIndicator
-            color="#FFD700"
-            size="large"
-            style={{ marginTop: 50 }}
-          />
-        ) : planGroups.length === 0 ? (
+        {wodGroups.length === 0 ? (
           <View style={styles.emptyBox}>
             <Ionicons
-              name="calendar-outline"
-              size={60}
-              color="#333"
+              name="barbell-outline"
+              size={56}
+              color="#1A1A1A"
             />
 
             <Text style={styles.emptyTitle}>
-              No hay WODs creados
+              Sin WODs para este día
             </Text>
 
             <Text style={styles.emptyText}>
-              Crea un WOD para este día y asígnalo a uno o varios alumnos.
+              Crea un WOD y asígnalo a los alumnos con período activo.
             </Text>
           </View>
         ) : (
-          planGroups.map((group) => {
-            const isExpanded = expandedGroup === group.title;
+          wodGroups.map((group) => {
+            const isExpanded = !!expandedGroups[group.key];
 
             return (
               <View
-                key={group.title}
-                style={styles.groupCard}
+                key={group.key}
+                style={styles.wodCard}
               >
-                <TouchableOpacity
-                  style={styles.groupHeader}
-                  onPress={() => toggleGroup(group.title)}
-                  activeOpacity={0.85}
-                >
-                  <View style={{ flex: 1 }}>
-                    <Text style={styles.groupTitle}>
-                      🔥 {group.title}
-                    </Text>
+                <View style={styles.wodHeader}>
+                  <TouchableOpacity
+                    style={styles.wodTitleArea}
+                    onPress={() => openWodGroup(group)}
+                    activeOpacity={0.8}
+                  >
+                    <View>
+                      <Text style={styles.wodTitle}>
+                        🔥 {group.title}
+                      </Text>
 
-                    <Text style={styles.groupSubtitle}>
-                      {group.plans.length} alumno{group.plans.length === 1 ? '' : 's'} asignado{group.plans.length === 1 ? '' : 's'}
-                    </Text>
-                  </View>
+                      <Text style={styles.studentsCount}>
+                        {getStudentsCountText(group.plans.length)}
+                      </Text>
 
-                  <Ionicons
-                    name={isExpanded ? 'chevron-up' : 'chevron-down'}
-                    size={24}
-                    color="#FFD700"
-                  />
-                </TouchableOpacity>
+                      <Text style={styles.manageHint}>
+                        Tocar nombre para gestionar alumnos
+                      </Text>
+                    </View>
+                  </TouchableOpacity>
+
+                  <TouchableOpacity
+                    style={styles.expandBtn}
+                    onPress={() => toggleGroup(group.key)}
+                  >
+                    <Ionicons
+                      name={isExpanded ? 'chevron-up' : 'chevron-down'}
+                      size={26}
+                      color="#FFD700"
+                    />
+                  </TouchableOpacity>
+                </View>
 
                 {isExpanded && (
-                  <View style={styles.studentsList}>
-                    {group.plans.map((plan) => (
-                      <TouchableOpacity
-                        key={plan.id}
-                        style={styles.studentRow}
-                        onPress={() => handleOpenStudentPlan(plan)}
-                        activeOpacity={0.85}
-                      >
-                        <View style={styles.avatar}>
-                          <Text style={styles.avatarText}>
-                            {plan.student?.full_name?.charAt(0) || '?'}
-                          </Text>
-                        </View>
+                  <View style={styles.studentsContainer}>
+                    {group.plans.map((studentPlan) => {
+                      const student = studentPlan.student_profile;
+                      const studentName =
+                        student?.full_name || 'Alumno sin nombre';
 
-                        <View style={{ flex: 1 }}>
-                          <Text style={styles.studentName}>
-                            {plan.student?.full_name || 'Alumno sin nombre'}
-                          </Text>
+                      return (
+                        <TouchableOpacity
+                          key={studentPlan.id}
+                          style={styles.studentRow}
+                          onPress={() => openStudentPlan(studentPlan)}
+                          activeOpacity={0.85}
+                        >
+                          <View style={styles.avatar}>
+                            <Text style={styles.avatarText}>
+                              {getInitial(studentName)}
+                            </Text>
+                          </View>
 
-                          <Text style={styles.studentSub}>
-                            {plan.student?.level || 'Sin nivel'} · Tocar para editar
-                          </Text>
-                        </View>
+                          <View style={styles.studentInfo}>
+                            <Text style={styles.studentName}>
+                              {studentName}
+                            </Text>
 
-                        <Ionicons
-                          name="create-outline"
-                          size={20}
-                          color="#FFD700"
-                        />
-                      </TouchableOpacity>
-                    ))}
+                            <Text style={styles.studentSub}>
+                              {student?.level || 'Sin nivel'} · Tocar para editar copia individual
+                            </Text>
+                          </View>
+
+                          <Ionicons
+                            name="create-outline"
+                            size={22}
+                            color="#FFD700"
+                          />
+                        </TouchableOpacity>
+                      );
+                    })}
                   </View>
                 )}
               </View>
@@ -280,23 +378,21 @@ export default function CoachDayPlansScreen({ route, navigation }) {
         <View style={{ height: 110 }} />
       </ScrollView>
 
-      <View style={styles.footer}>
-        <TouchableOpacity
-          style={styles.newButton}
-          onPress={handleNewWod}
-          activeOpacity={0.85}
-        >
-          <Ionicons
-            name="add-circle-outline"
-            size={22}
-            color="#000"
-          />
+      <TouchableOpacity
+        style={styles.newButton}
+        onPress={goToNewWod}
+        activeOpacity={0.9}
+      >
+        <Ionicons
+          name="add-circle-outline"
+          size={22}
+          color="#000"
+        />
 
-          <Text style={styles.newButtonText}>
-            NUEVO WOD
-          </Text>
-        </TouchableOpacity>
-      </View>
+        <Text style={styles.newButtonText}>
+          NUEVO WOD
+        </Text>
+      </TouchableOpacity>
     </View>
   );
 }
@@ -307,169 +403,173 @@ const styles = StyleSheet.create({
     backgroundColor: '#000',
   },
 
-  scroll: {
+  scrollContent: {
     padding: 20,
-    paddingBottom: 30,
+    paddingBottom: 130,
   },
 
-  headerBox: {
-    marginBottom: 20,
+  headerBlock: {
+    marginBottom: 22,
   },
 
-  label: {
+  headerLabel: {
     color: '#FFD700',
     fontSize: 11,
     fontWeight: '900',
-    letterSpacing: 1.5,
-    marginBottom: 6,
+    letterSpacing: 2,
+    marginBottom: 8,
   },
 
-  title: {
+  dateTitle: {
     color: '#FFF',
-    fontSize: 26,
+    fontSize: 28,
     fontWeight: '900',
   },
 
-  holidayBanner: {
+  holidayBox: {
     flexDirection: 'row',
     alignItems: 'center',
+    marginTop: 12,
     backgroundColor: '#170707',
     borderWidth: 1,
     borderColor: '#FF4D4D',
-    borderRadius: 14,
-    padding: 14,
-    marginTop: 15,
-  },
-
-  holidayTextBox: {
-    marginLeft: 10,
-    flex: 1,
-  },
-
-  holidayTitle: {
-    color: '#FF4D4D',
-    fontWeight: '900',
-    fontSize: 12,
+    borderRadius: 12,
+    padding: 12,
   },
 
   holidayText: {
     color: '#FF9B9B',
-    marginTop: 3,
+    marginLeft: 8,
     fontSize: 13,
+    fontWeight: 'bold',
   },
 
-  groupCard: {
-    backgroundColor: '#0A0A0A',
+  wodCard: {
+    backgroundColor: '#080808',
     borderWidth: 1,
     borderColor: '#222',
-    borderRadius: 16,
-    marginBottom: 14,
+    borderRadius: 18,
+    marginBottom: 16,
     overflow: 'hidden',
   },
 
-  groupHeader: {
+  wodHeader: {
     flexDirection: 'row',
     alignItems: 'center',
-    padding: 16,
+    padding: 18,
+    borderBottomWidth: 1,
+    borderBottomColor: '#151515',
   },
 
-  groupTitle: {
+  wodTitleArea: {
+    flex: 1,
+  },
+
+  wodTitle: {
     color: '#FFF',
-    fontSize: 18,
+    fontSize: 22,
     fontWeight: '900',
   },
 
-  groupSubtitle: {
-    color: '#888',
-    marginTop: 5,
-    fontSize: 13,
+  studentsCount: {
+    color: '#AAA',
+    fontSize: 14,
+    marginTop: 6,
   },
 
-  studentsList: {
-    borderTopWidth: 1,
-    borderTopColor: '#1A1A1A',
-    padding: 10,
+  manageHint: {
+    color: '#555',
+    fontSize: 11,
+    marginTop: 4,
+  },
+
+  expandBtn: {
+    padding: 8,
+  },
+
+  studentsContainer: {
+    padding: 12,
   },
 
   studentRow: {
     flexDirection: 'row',
     alignItems: 'center',
     backgroundColor: '#111',
-    borderRadius: 12,
-    padding: 12,
-    marginBottom: 8,
+    borderRadius: 14,
+    padding: 14,
+    marginBottom: 10,
   },
 
   avatar: {
-    width: 42,
-    height: 42,
+    width: 48,
+    height: 48,
     borderRadius: 14,
     backgroundColor: '#FFD700',
     alignItems: 'center',
     justifyContent: 'center',
-    marginRight: 12,
+    marginRight: 14,
   },
 
   avatarText: {
     color: '#000',
     fontWeight: '900',
-    fontSize: 16,
+    fontSize: 17,
+  },
+
+  studentInfo: {
+    flex: 1,
   },
 
   studentName: {
     color: '#FFF',
-    fontWeight: 'bold',
-    fontSize: 15,
+    fontSize: 16,
+    fontWeight: '900',
   },
 
   studentSub: {
     color: '#777',
-    marginTop: 3,
+    marginTop: 4,
     fontSize: 12,
   },
 
   emptyBox: {
     alignItems: 'center',
-    marginTop: 70,
-    paddingHorizontal: 20,
+    paddingVertical: 80,
   },
 
   emptyTitle: {
     color: '#FFF',
     fontSize: 18,
     fontWeight: '900',
-    marginTop: 15,
+    marginTop: 14,
   },
 
   emptyText: {
-    color: '#777',
-    marginTop: 8,
+    color: '#666',
     textAlign: 'center',
+    marginTop: 8,
     lineHeight: 20,
   },
 
-  footer: {
-    position: 'absolute',
-    bottom: 0,
-    left: 0,
-    right: 0,
-    backgroundColor: 'rgba(0,0,0,0.95)',
-    padding: 20,
-  },
-
   newButton: {
+    position: 'absolute',
+    bottom: 25,
+    left: 20,
+    right: 20,
     backgroundColor: '#FFD700',
-    borderRadius: 15,
-    paddingVertical: 17,
+    borderRadius: 18,
+    paddingVertical: 18,
     alignItems: 'center',
     justifyContent: 'center',
     flexDirection: 'row',
+    elevation: 8,
   },
 
   newButtonText: {
     color: '#000',
     fontWeight: '900',
+    fontSize: 15,
     marginLeft: 8,
-    letterSpacing: 1,
+    letterSpacing: 0.8,
   },
 });

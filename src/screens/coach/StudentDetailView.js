@@ -9,7 +9,6 @@ import {
   LayoutAnimation,
   Platform,
   UIManager,
-  Alert,
 } from 'react-native';
 import { supabase } from '../../config/supabaseClient';
 import { Ionicons } from '@expo/vector-icons';
@@ -20,320 +19,670 @@ if (Platform.OS === 'android' && UIManager.setLayoutAnimationEnabledExperimental
   UIManager.setLayoutAnimationEnabledExperimental(true);
 }
 
-// ─── Helpers ─────────────────────────────────────────────────────────────────
+/* ─────────────────────────────────────────────
+   HELPERS
+───────────────────────────────────────────── */
 
-const fmt = (date) =>
-  date.toLocaleDateString('es-ES', { day: 'numeric', month: 'short' }).toUpperCase();
+const toDate = (dateString) => new Date(`${dateString}T12:00:00`);
 
-const fmtFull = (date) =>
-  date.toLocaleDateString('es-ES', { weekday: 'long', day: 'numeric' }).replace(/^\w/, c => c.toUpperCase());
+const fmtShort = (dateString) => {
+  if (!dateString) return '-';
 
-const groupByCycles = (sessions, planStartDate) => {
-  if (!sessions.length) return [];
-  const start = new Date(planStartDate + 'T12:00:00');
+  return toDate(dateString)
+    .toLocaleDateString('es-ES', {
+      day: 'numeric',
+      month: 'short',
+    })
+    .toUpperCase();
+};
+
+const fmtFull = (dateString) => {
+  if (!dateString) return '-';
+
+  return toDate(dateString)
+    .toLocaleDateString('es-ES', {
+      weekday: 'long',
+      day: 'numeric',
+      month: 'short',
+    })
+    .replace(/^\w/, (c) => c.toUpperCase());
+};
+
+const addDays = (dateString, days) => {
+  const date = toDate(dateString);
+  date.setDate(date.getDate() + days);
+  return date.toISOString().split('T')[0];
+};
+
+const getWeeksBetween = (startDate, endDate) => {
+  if (!startDate || !endDate) return 0;
+
+  const start = toDate(startDate);
+  const end = toDate(endDate);
+
+  const diffMs = end - start;
+  const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24)) + 1;
+
+  return Math.max(1, Math.ceil(diffDays / 7));
+};
+
+const getPeriodStatus = (startDate, endDate) => {
+  if (!startDate || !endDate) return 'Sin período';
+
   const today = new Date();
   today.setHours(12, 0, 0, 0);
 
-  const cycleMap = {};
+  const start = toDate(startDate);
+  const end = toDate(endDate);
 
-  sessions.forEach(session => {
-    const date = new Date(session.date + 'T12:00:00');
-    const daysSinceStart = Math.floor((date - start) / (1000 * 60 * 60 * 24));
-    const cycleIndex = Math.max(0, Math.floor(daysSinceStart / 30));
-    const cycleNumber = cycleIndex + 1;
-
-    const cycleStart = new Date(start);
-    cycleStart.setDate(cycleStart.getDate() + cycleIndex * 30);
-    const cycleEnd = new Date(cycleStart);
-    cycleEnd.setDate(cycleEnd.getDate() + 29);
-
-    const isActiveCycle = today >= cycleStart && today <= cycleEnd;
-    const cycleKey = `cycle_${cycleNumber}`;
-
-    if (!cycleMap[cycleKey]) {
-      cycleMap[cycleKey] = {
-        cycleNumber,
-        cycleKey,
-        label: `CICLO ${cycleNumber}`,
-        dateRange: `${fmt(cycleStart)} → ${fmt(cycleEnd)}`,
-        cycleStart,
-        cycleEnd,
-        isActiveCycle,
-        weeks: {},
-      };
-    }
-
-    const dayInCycle = daysSinceStart - cycleIndex * 30;
-    const weekNumber = Math.min(4, Math.floor(dayInCycle / 7) + 1);
-    const weekKey = `week_${weekNumber}`;
-
-    if (!cycleMap[cycleKey].weeks[weekKey]) {
-      cycleMap[cycleKey].weeks[weekKey] = {
-        weekNumber,
-        weekKey,
-        label: `Semana ${weekNumber}`,
-        sessions: [],
-      };
-    }
-    cycleMap[cycleKey].weeks[weekKey].sessions.push(session);
-  });
-
-  return Object.values(cycleMap)
-    .sort((a, b) => b.cycleNumber - a.cycleNumber)
-    .map(cycle => ({
-      ...cycle,
-      weeks: Object.values(cycle.weeks)
-        .sort((a, b) => a.weekNumber - b.weekNumber)
-        .map(week => ({
-          ...week,
-          sessions: week.sessions.sort((a, b) => new Date(a.date) - new Date(b.date)),
-          isCompleted: week.sessions.length > 0 && week.sessions.every(s => s.is_done),
-        })),
-    }));
+  if (today < start) return 'Futuro';
+  if (today > end) return 'Vencido';
+  return 'En curso';
 };
 
-const getActiveWeekKey = (cycle, planStartDate) => {
-  if (!cycle?.isActiveCycle) return null;
-  const start = new Date(planStartDate + 'T12:00:00');
+const getCurrentWeekNumber = (startDate, endDate) => {
+  if (!startDate || !endDate) return null;
+
   const today = new Date();
   today.setHours(12, 0, 0, 0);
-  const daysSinceStart = Math.floor((today - start) / (1000 * 60 * 60 * 24));
-  const cycleIndex = cycle.cycleNumber - 1;
-  const dayInCycle = daysSinceStart - cycleIndex * 30;
-  const weekNumber = Math.min(4, Math.floor(dayInCycle / 7) + 1);
-  return `week_${weekNumber}`;
+
+  const start = toDate(startDate);
+  const end = toDate(endDate);
+
+  if (today < start || today > end) return null;
+
+  const diffMs = today - start;
+  const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24));
+
+  return Math.floor(diffDays / 7) + 1;
 };
 
-// ─── Session Card ─────────────────────────────────────────────────────────────
-function SessionCard({ session, onPress }) {
-  return (
-    <TouchableOpacity style={sessionStyles.card} onPress={() => onPress(session)} activeOpacity={0.7}>
-      <View style={[sessionStyles.statusBar, session.is_done && sessionStyles.statusBarDone]} />
-      <View style={sessionStyles.info}>
-        <Text style={sessionStyles.title}>{session.day_name || session.title}</Text>
-        <Text style={sessionStyles.date}>{fmtFull(new Date(session.date + 'T12:00:00'))}</Text>
+const buildWeeks = (wods, startDate, endDate, totalWeeks) => {
+  if (!startDate || !endDate || !totalWeeks) return [];
+
+  const weeks = [];
+
+  for (let i = 1; i <= totalWeeks; i++) {
+    const weekStart = addDays(startDate, (i - 1) * 7);
+    const weekEnd = i === totalWeeks
+      ? endDate
+      : addDays(weekStart, 6);
+
+    const sessions = (wods || []).filter((wod) => (
+      wod.date >= weekStart && wod.date <= weekEnd
+    ));
+
+    weeks.push({
+      weekNumber: i,
+      weekKey: `week_${i}`,
+      label: `Semana ${i}`,
+      startDate: weekStart,
+      endDate: weekEnd,
+      dateRange: `${fmtShort(weekStart)} → ${fmtShort(weekEnd)}`,
+      sessions,
+    });
+  }
+
+  return weeks;
+};
+
+/* ─────────────────────────────────────────────
+   PERIOD SUMMARY
+───────────────────────────────────────────── */
+
+function PeriodSummaryCard({ student, wodsCount }) {
+  const startDate = student?.plan_start_date;
+  const endDate = student?.plan_end_date;
+  const sessionsPerWeek = student?.sessions_per_week || 0;
+  const planWeeks = student?.plan_weeks || getWeeksBetween(startDate, endDate);
+  const totalExpected = sessionsPerWeek * planWeeks;
+  const remaining = Math.max(totalExpected - wodsCount, 0);
+  const progress = totalExpected > 0 ? Math.min(wodsCount / totalExpected, 1) : 0;
+  const status = getPeriodStatus(startDate, endDate);
+
+  if (!startDate || !endDate) {
+    return (
+      <View style={periodStyles.card}>
+        <View style={periodStyles.emptyIcon}>
+          <Ionicons name="calendar-outline" size={30} color="#FFD700" />
+        </View>
+
+        <Text style={periodStyles.emptyTitle}>
+          Sin período activo
+        </Text>
+
+        <Text style={periodStyles.emptyText}>
+          Configura un período para definir cuántos WODs debe recibir este alumno.
+        </Text>
       </View>
+    );
+  }
+
+  return (
+    <View style={periodStyles.card}>
+      <View style={periodStyles.topRow}>
+        <View>
+          <Text style={periodStyles.label}>
+            PERÍODO ACTIVO
+          </Text>
+
+          <Text style={periodStyles.range}>
+            {fmtShort(startDate)} → {fmtShort(endDate)}
+          </Text>
+        </View>
+
+        <View
+          style={[
+            periodStyles.statusBadge,
+            status === 'En curso' && periodStyles.statusActive,
+            status === 'Vencido' && periodStyles.statusExpired,
+            status === 'Futuro' && periodStyles.statusFuture,
+          ]}
+        >
+          <Text style={periodStyles.statusText}>
+            {status.toUpperCase()}
+          </Text>
+        </View>
+      </View>
+
+      <View style={periodStyles.statsRow}>
+        <View style={periodStyles.statBox}>
+          <Text style={periodStyles.statValue}>
+            {sessionsPerWeek}
+          </Text>
+          <Text style={periodStyles.statLabel}>
+            Veces/sem
+          </Text>
+        </View>
+
+        <View style={periodStyles.statBox}>
+          <Text style={periodStyles.statValue}>
+            {planWeeks}
+          </Text>
+          <Text style={periodStyles.statLabel}>
+            Semanas
+          </Text>
+        </View>
+
+        <View style={periodStyles.statBox}>
+          <Text style={periodStyles.statValue}>
+            {wodsCount}/{totalExpected}
+          </Text>
+          <Text style={periodStyles.statLabel}>
+            WODs
+          </Text>
+        </View>
+
+        <View style={periodStyles.statBox}>
+          <Text style={periodStyles.statValue}>
+            {remaining}
+          </Text>
+          <Text style={periodStyles.statLabel}>
+            Restan
+          </Text>
+        </View>
+      </View>
+
+      <View style={periodStyles.progressBg}>
+        <View
+          style={[
+            periodStyles.progressFill,
+            { width: `${progress * 100}%` },
+          ]}
+        />
+      </View>
+    </View>
+  );
+}
+
+/* ─────────────────────────────────────────────
+   PERIOD HISTORY
+───────────────────────────────────────────── */
+
+function PeriodHistoryCard({ period }) {
+  const progress =
+    period.total_sessions > 0
+      ? Math.min(period.wods_cargados / period.total_sessions, 1)
+      : 0;
+
+  return (
+    <View style={historyStyles.card}>
+      <View style={historyStyles.topRow}>
+        <View style={{ flex: 1 }}>
+          <Text style={historyStyles.title}>
+            {fmtShort(period.start_date)} → {fmtShort(period.end_date)}
+          </Text>
+
+          <Text style={historyStyles.subtitle}>
+            {period.sessions_per_week} veces/sem · {period.weeks} semanas
+          </Text>
+        </View>
+
+        <View style={historyStyles.badge}>
+          <Text style={historyStyles.badgeText}>
+            {(period.status || 'Active').toUpperCase()}
+          </Text>
+        </View>
+      </View>
+
+      <View style={historyStyles.statsRow}>
+        <Text style={historyStyles.statText}>
+          {period.wods_cargados} / {period.total_sessions} WODs cargados
+        </Text>
+
+        <Text style={historyStyles.remainingText}>
+          Restan {period.wods_restantes}
+        </Text>
+      </View>
+
+      <View style={historyStyles.progressBg}>
+        <View
+          style={[
+            historyStyles.progressFill,
+            { width: `${progress * 100}%` },
+          ]}
+        />
+      </View>
+    </View>
+  );
+}
+
+/* ─────────────────────────────────────────────
+   WOD CARD
+───────────────────────────────────────────── */
+
+function WodCard({ session, onPress }) {
+  return (
+    <TouchableOpacity
+      style={wodStyles.card}
+      onPress={() => onPress(session)}
+      activeOpacity={0.75}
+    >
+      <View
+        style={[
+          wodStyles.statusBar,
+          session.is_done && wodStyles.statusBarDone,
+        ]}
+      />
+
+      <View style={wodStyles.info}>
+        <Text style={wodStyles.title}>
+          {session.title || 'WOD sin título'}
+        </Text>
+
+        <Text style={wodStyles.date}>
+          {fmtFull(session.date)}
+        </Text>
+      </View>
+
       {session.is_done ? (
-        <View style={sessionStyles.doneBadge}>
+        <View style={wodStyles.doneBadge}>
           <Ionicons name="checkmark" size={12} color="#000" />
         </View>
       ) : (
-        <Ionicons name="chevron-forward" size={16} color="#333" />
+        <Ionicons name="chevron-forward" size={18} color="#555" />
       )}
     </TouchableOpacity>
   );
 }
 
-// ─── Week Row ─────────────────────────────────────────────────────────────────
-function WeekRow({ week, isExpanded, isActive, onToggle, onSessionPress }) {
-  const completedCount = week.sessions.filter(s => s.is_done).length;
-  const total = week.sessions.length;
-  const progress = total > 0 ? completedCount / total : 0;
+/* ─────────────────────────────────────────────
+   WEEK ROW
+───────────────────────────────────────────── */
+
+function WeekRow({
+  week,
+  expectedPerWeek,
+  isExpanded,
+  isActive,
+  onToggle,
+  onSessionPress,
+}) {
+  const loadedCount = week.sessions.length;
+  const completedCount = week.sessions.filter((s) => s.is_done).length;
+  const expectedCount = expectedPerWeek || loadedCount;
+
+  const weekCompleted =
+    expectedCount > 0 &&
+    loadedCount >= expectedCount &&
+    completedCount >= expectedCount;
+
+  const missingCount = Math.max(expectedCount - loadedCount, 0);
 
   return (
     <View style={weekStyles.wrapper}>
       <TouchableOpacity
-        activeOpacity={0.8}
-        style={[weekStyles.bar, isExpanded && weekStyles.barExpanded, isActive && weekStyles.barActive]}
+        activeOpacity={0.85}
+        style={[
+          weekStyles.bar,
+          isExpanded && weekStyles.barExpanded,
+          isActive && weekStyles.barActive,
+        ]}
         onPress={onToggle}
       >
         <View style={weekStyles.left}>
-          <View style={[
-            weekStyles.numberBadge, 
-            isExpanded ? weekStyles.numberBadgeExpanded : (isActive ? weekStyles.numberBadgeActive : null)
-          ]}>
-            <Text style={[weekStyles.numberBadgeText, isExpanded && { color: '#000' }]}>
+          <View
+            style={[
+              weekStyles.numberBadge,
+              isExpanded && weekStyles.numberBadgeExpanded,
+              isActive && !isExpanded && weekStyles.numberBadgeActive,
+            ]}
+          >
+            <Text
+              style={[
+                weekStyles.numberBadgeText,
+                isExpanded && { color: '#000' },
+              ]}
+            >
               {week.weekNumber}
             </Text>
           </View>
 
-          <Text style={[weekStyles.label, isExpanded && weekStyles.labelExpanded]}>
-            {week.label}
-          </Text>
-          {isActive && !isExpanded && (
-            <View style={weekStyles.activePill}>
-              <Text style={weekStyles.activePillText}>ACTUAL</Text>
+          <View style={{ flex: 1 }}>
+            <View style={weekStyles.labelRow}>
+              <Text
+                style={[
+                  weekStyles.label,
+                  isExpanded && weekStyles.labelExpanded,
+                ]}
+              >
+                {week.label}
+              </Text>
+
+              {isActive && (
+                <View style={weekStyles.activePill}>
+                  <Text style={weekStyles.activePillText}>
+                    ACTUAL
+                  </Text>
+                </View>
+              )}
+
+              {weekCompleted && (
+                <View style={weekStyles.completedPill}>
+                  <Ionicons name="checkmark-circle" size={12} color="#00ff88" />
+                  <Text style={weekStyles.completedPillText}>
+                    COMPLETA
+                  </Text>
+                </View>
+              )}
             </View>
-          )}
-          {week.isCompleted && (
-            <View style={weekStyles.completedPill}>
-              <Ionicons name="checkmark-circle" size={12} color="#00ff88" />
-              <Text style={weekStyles.completedPillText}>COMPLETA</Text>
-            </View>
-          )}
+
+            <Text
+              style={[
+                weekStyles.dateRange,
+                isExpanded && { color: '#000' },
+              ]}
+            >
+              {week.dateRange}
+            </Text>
+          </View>
         </View>
+
         <View style={weekStyles.right}>
-          {!isExpanded && total > 0 && (
-            <Text style={weekStyles.progressText}>{completedCount}/{total}</Text>
-          )}
+          <Text
+            style={[
+              weekStyles.counter,
+              isExpanded && { color: '#000' },
+            ]}
+          >
+            {loadedCount}/{expectedCount}
+          </Text>
+
           <Ionicons
             name={isExpanded ? 'chevron-up' : 'chevron-down'}
             size={18}
-            color={isExpanded ? '#000' : '#444'}
+            color={isExpanded ? '#000' : '#555'}
           />
         </View>
       </TouchableOpacity>
 
-      {!isExpanded && total > 0 && progress > 0 && (
-        <View style={weekStyles.progressBarBg}>
-          <View style={[weekStyles.progressBarFill, { width: `${progress * 100}%` }]} />
-        </View>
-      )}
-
       {isExpanded && (
         <View style={weekStyles.sessionsContainer}>
-          {week.sessions.map(s => (
-            <SessionCard key={s.id} session={s} onPress={onSessionPress} />
-          ))}
+          {week.sessions.length === 0 ? (
+            <View style={weekStyles.emptyWeek}>
+              <Ionicons name="barbell-outline" size={24} color="#333" />
+
+              <Text style={weekStyles.emptyWeekText}>
+                Sin WODs cargados esta semana
+              </Text>
+
+              {expectedCount > 0 && (
+                <Text style={weekStyles.emptyWeekSubText}>
+                  Faltan {expectedCount} WODs esperados
+                </Text>
+              )}
+            </View>
+          ) : (
+            <>
+              {week.sessions.map((session) => (
+                <WodCard
+                  key={session.id}
+                  session={session}
+                  onPress={onSessionPress}
+                />
+              ))}
+
+              {missingCount > 0 && (
+                <View style={weekStyles.missingBox}>
+                  <Ionicons
+                    name="alert-circle-outline"
+                    size={18}
+                    color="#FFD700"
+                  />
+
+                  <Text style={weekStyles.missingText}>
+                    Faltan {missingCount} WODs para completar esta semana
+                  </Text>
+                </View>
+              )}
+            </>
+          )}
         </View>
       )}
     </View>
   );
 }
 
-// ─── Cycle Header ─────────────────────────────────────────────────────────────
-function CycleHeader({ cycle, onDelete }) {
-  const completedSessions = cycle.weeks.reduce((acc, w) => acc + w.sessions.filter(s => s.is_done).length, 0);
-  const totalSessions = cycle.weeks.reduce((acc, w) => acc + w.sessions.length, 0);
+/* ─────────────────────────────────────────────
+   MAIN COMPONENT
+───────────────────────────────────────────── */
 
-  return (
-    <View style={cycleStyles.header}>
-      <View style={cycleStyles.left}>
-        <View style={cycleStyles.numberBadge}>
-          <Text style={cycleStyles.numberText}>{cycle.cycleNumber}</Text>
-        </View>
-        <View>
-          <View style={cycleStyles.labelRow}>
-            <Text style={cycleStyles.label}>{cycle.label}</Text>
-            {cycle.isActiveCycle && (
-              <View style={cycleStyles.activeBadge}>
-                <View style={cycleStyles.activeDot} />
-                <Text style={cycleStyles.activeBadgeText}>EN CURSO</Text>
-              </View>
-            )}
-          </View>
-          <Text style={cycleStyles.dateRange}>{cycle.dateRange}</Text>
-        </View>
-      </View>
-      <View style={{ flexDirection: 'row', alignItems: 'center', gap: 12 }}>
-        <Text style={cycleStyles.counter}>{completedSessions}/{totalSessions}</Text>
-        <TouchableOpacity onPress={() => onDelete(cycle)} style={{ padding: 8 }}>
-          <Ionicons name="trash-outline" size={18} color="#FF3B30" />
-        </TouchableOpacity>
-      </View>
-    </View>
-  );
-}
-
-// ─── Main Component ───────────────────────────────────────────────────────────
 export default function StudentDetailView({ route, navigation }) {
   const { student } = route.params || {};
-  const [cycles, setCycles] = useState([]);
+
+  const [studentProfile, setStudentProfile] = useState(student || null);
+  const [weeks, setWeeks] = useState([]);
+  const [wods, setWods] = useState([]);
+  const [periodsHistory, setPeriodsHistory] = useState([]);
   const [expandedWeeks, setExpandedWeeks] = useState({});
   const [loading, setLoading] = useState(true);
-  
-  // NUEVO ESTADO PARA CONTROLAR SI EL CHAT ESTÁ ABIERTO O CERRADO
   const [chatVisible, setChatVisible] = useState(false);
 
   useFocusEffect(
     useCallback(() => {
-      if (student?.id) fetchStudentPlans();
+      if (student?.id) {
+        fetchStudentPlanning();
+      }
     }, [student?.id])
   );
 
-  const fetchStudentPlans = async () => {
+  const fetchStudentPlanning = async () => {
     try {
       setLoading(true);
-      const { data, error } = await supabase
+
+      const { data: freshProfile, error: profileError } = await supabase
+        .from('profiles')
+        .select(`
+          id,
+          full_name,
+          email,
+          role,
+          status,
+          level,
+          coach_id,
+          plan_start_date,
+          plan_end_date,
+          sessions_per_week,
+          plan_weeks
+        `)
+        .eq('id', student.id)
+        .single();
+
+      if (profileError) throw profileError;
+
+      setStudentProfile(freshProfile);
+
+      const { data: periodsData, error: periodsError } = await supabase
+        .from('student_plan_periods')
+        .select(`
+          id,
+          student_id,
+          coach_id,
+          start_date,
+          end_date,
+          sessions_per_week,
+          weeks,
+          total_sessions,
+          status,
+          created_at
+        `)
+        .eq('student_id', student.id)
+        .order('start_date', { ascending: false });
+
+      if (periodsError) throw periodsError;
+
+      const { data: allWodsData, error: allWodsError } = await supabase
         .from('plans')
         .select('*')
         .eq('student_id', student.id)
-        .order('date', { ascending: false });
+        .eq('source', 'calendar_wod')
+        .eq('plan_type', 'wod')
+        .order('date', { ascending: true });
 
-      if (error) throw error;
-      buildCycles(data || []);
+      if (allWodsError) throw allWodsError;
+
+      const allWods = allWodsData || [];
+
+      const periodsWithProgress = (periodsData || []).map((period) => {
+        const periodWods = allWods.filter((wod) => (
+          wod.date >= period.start_date &&
+          wod.date <= period.end_date
+        ));
+
+        return {
+          ...period,
+          wods_cargados: periodWods.length,
+          wods_restantes: Math.max(
+            (period.total_sessions || 0) - periodWods.length,
+            0
+          ),
+        };
+      });
+
+      setPeriodsHistory(periodsWithProgress);
+
+      const hasPeriod =
+        freshProfile?.plan_start_date &&
+        freshProfile?.plan_end_date;
+
+      const currentPeriodWods = hasPeriod
+        ? allWods.filter((wod) => (
+            wod.date >= freshProfile.plan_start_date &&
+            wod.date <= freshProfile.plan_end_date
+          ))
+        : allWods;
+
+      setWods(currentPeriodWods);
+
+      if (!hasPeriod) {
+        setWeeks([]);
+        setExpandedWeeks({});
+        return;
+      }
+
+      const totalWeeks =
+        freshProfile.plan_weeks ||
+        getWeeksBetween(
+          freshProfile.plan_start_date,
+          freshProfile.plan_end_date
+        );
+
+      const builtWeeks = buildWeeks(
+        currentPeriodWods,
+        freshProfile.plan_start_date,
+        freshProfile.plan_end_date,
+        totalWeeks
+      );
+
+      setWeeks(builtWeeks);
+
+      const currentWeekNumber = getCurrentWeekNumber(
+        freshProfile.plan_start_date,
+        freshProfile.plan_end_date
+      );
+
+      if (currentWeekNumber) {
+        setExpandedWeeks({
+          [`week_${currentWeekNumber}`]: true,
+        });
+      } else if (builtWeeks.length > 0) {
+        setExpandedWeeks({
+          [builtWeeks[0].weekKey]: true,
+        });
+      }
     } catch (error) {
-      console.error('Error:', error.message);
+      console.error('Error cargando planificación del alumno:', error.message);
     } finally {
       setLoading(false);
     }
   };
 
-  const deleteCycle = async (cycle) => {
-    const startStr = cycle.cycleStart.toISOString().split('T')[0];
-    const endStr = cycle.cycleEnd.toISOString().split('T')[0];
-
-    const performDelete = async () => {
-      try {
-        const { error } = await supabase
-          .from('plans')
-          .delete()
-          .eq('student_id', student.id)
-          .gte('date', startStr)
-          .lte('date', endStr);
-
-        if (error) throw error;
-        fetchStudentPlans();
-      } catch (err) {
-        Alert.alert("Error", "No se pudieron eliminar las sesiones");
-      }
-    };
-
-    if (Platform.OS === 'web') {
-      const confirmed = window.confirm("¿Eliminar todas las sesiones de este ciclo?");
-      if (confirmed) performDelete();
-    } else {
-      Alert.alert(
-        "Eliminar Ciclo",
-        "Se borrarán las sesiones de este mes. ¿Continuar?",
-        [
-          { text: "Cancelar", style: "cancel" },
-          { text: "Eliminar", style: "destructive", onPress: performDelete }
-        ]
-      );
-    }
-  };
-
-  const buildCycles = (data) => {
-    const planStart = student.plan_start_date
-      || (data.length > 0 ? [...data].sort((a, b) => new Date(a.date) - new Date(b.date))[0].date : null);
-
-    if (!planStart) { setCycles([]); return; }
-
-    const built = groupByCycles(data, planStart);
-    setCycles(built);
-
-    const activeCycle = built.find(c => c.isActiveCycle);
-    if (activeCycle) {
-      const activeWeekKey = getActiveWeekKey(activeCycle, planStart);
-      if (activeWeekKey) {
-        setExpandedWeeks({ [`${activeCycle.cycleKey}_${activeWeekKey}`]: true });
-      }
-    }
-  };
-
-  const toggleWeek = (expandKey) => {
+  const toggleWeek = (weekKey) => {
     LayoutAnimation.configureNext(LayoutAnimation.Presets.easeInEaseOut);
-    setExpandedWeeks(prev => ({ ...prev, [expandKey]: !prev[expandKey] }));
+
+    setExpandedWeeks((prev) => ({
+      ...prev,
+      [weekKey]: !prev[weekKey],
+    }));
   };
 
-  // Extraemos un planId válido para pasarle al Modal (si no hay, pasará undefined)
-  const firstPlanId = cycles[0]?.weeks[0]?.sessions[0]?.id;
+  const handleOpenWod = (session) => {
+    navigation.navigate('DayDetail', {
+      plan: session,
+      date: session.date,
+    });
+  };
+
+  const firstPlanId = wods[0]?.id;
+
+  const currentWeekNumber = getCurrentWeekNumber(
+    studentProfile?.plan_start_date,
+    studentProfile?.plan_end_date
+  );
+
+  const expectedPerWeek = studentProfile?.sessions_per_week || 0;
 
   return (
     <View style={styles.container}>
       <View style={styles.header}>
-        <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backBtn}>
+        <TouchableOpacity
+          onPress={() => navigation.goBack()}
+          style={styles.backBtn}
+        >
           <Ionicons name="arrow-back" size={22} color="#FFD700" />
         </TouchableOpacity>
-        
+
         <View style={{ flex: 1 }}>
-          <Text style={styles.headerLabel}>PROGRAMACIÓN DE</Text>
-          <Text style={styles.headerName} numberOfLines={1}>{student?.full_name}</Text>
+          <Text style={styles.headerLabel}>
+            PROGRAMACIÓN DE
+          </Text>
+
+          <Text style={styles.headerName} numberOfLines={1}>
+            {studentProfile?.full_name || student?.full_name || 'Alumno'}
+          </Text>
         </View>
 
-        {/* BOTÓN DE CHAT MODIFICADO PARA ABRIR EL MODAL */}
-        <TouchableOpacity 
+        <TouchableOpacity
           style={styles.chatBtn}
           onPress={() => setChatVisible(true)}
         >
@@ -342,129 +691,600 @@ export default function StudentDetailView({ route, navigation }) {
       </View>
 
       {loading ? (
-        <ActivityIndicator size="large" color="#FFD700" style={{ marginTop: 60 }} />
+        <ActivityIndicator
+          size="large"
+          color="#FFD700"
+          style={{ marginTop: 60 }}
+        />
       ) : (
         <FlatList
-          data={cycles}
-          keyExtractor={item => item.cycleKey}
+          data={weeks}
+          keyExtractor={(item) => item.weekKey}
           contentContainerStyle={styles.listContent}
-          renderItem={({ item: cycle }) => (
-            <View>
-              <CycleHeader cycle={cycle} onDelete={deleteCycle} />
-              {cycle.weeks.map(week => {
-                const expandKey = `${cycle.cycleKey}_${week.weekKey}`;
-                const planStart = student.plan_start_date || (cycles.length > 0 ? cycles[cycles.length-1].cycleStart.toISOString().split('T')[0] : '');
-                const activeWeekKey = getActiveWeekKey(cycle, planStart);
-                const isActiveWeek = cycle.isActiveCycle && week.weekKey === activeWeekKey;
+          ListHeaderComponent={
+            <>
+              <PeriodSummaryCard
+                student={studentProfile}
+                wodsCount={wods.length}
+              />
 
-                return (
-                  <WeekRow
-                    key={week.weekKey}
-                    week={week}
-                    isExpanded={!!expandedWeeks[expandKey]}
-                    isActive={isActiveWeek}
-                    onToggle={() => toggleWeek(expandKey)}
-                    onSessionPress={(session) =>
-                      navigation.navigate('DayDetail', { plan: session })
-                    }
-                  />
-                );
-              })}
-            </View>
+              {periodsHistory.length > 0 && (
+                <>
+                  <Text style={styles.sectionTitle}>
+                    Historial de períodos
+                  </Text>
+
+                  {periodsHistory.map((period) => (
+                    <PeriodHistoryCard
+                      key={period.id}
+                      period={period}
+                    />
+                  ))}
+                </>
+              )}
+
+              {studentProfile?.plan_start_date && studentProfile?.plan_end_date && (
+                <Text style={styles.sectionTitle}>
+                  WODs cargados por semana
+                </Text>
+              )}
+            </>
+          }
+          renderItem={({ item }) => (
+            <WeekRow
+              week={item}
+              expectedPerWeek={expectedPerWeek}
+              isExpanded={!!expandedWeeks[item.weekKey]}
+              isActive={item.weekNumber === currentWeekNumber}
+              onToggle={() => toggleWeek(item.weekKey)}
+              onSessionPress={handleOpenWod}
+            />
           )}
           ListEmptyComponent={
-            <View style={styles.emptyState}>
-              <Ionicons name="calendar-outline" size={60} color="#1a1a1a" />
-              <Text style={styles.emptyTitle}>Sin planes programados</Text>
-            </View>
+            studentProfile?.plan_start_date && studentProfile?.plan_end_date ? (
+              <View style={styles.emptyState}>
+                <Ionicons name="barbell-outline" size={60} color="#1a1a1a" />
+
+                <Text style={styles.emptyTitle}>
+                  Sin WODs cargados
+                </Text>
+
+                <Text style={styles.emptyText}>
+                  Los WODs se cargarán desde Calendario V2.
+                </Text>
+              </View>
+            ) : null
           }
         />
       )}
 
-      {/* COMPONENTE DEL MODAL DE CHAT */}
-      <CommentsModal 
-        visible={chatVisible} 
-        onClose={() => setChatVisible(false)} 
-        planId={firstPlanId} 
+      <CommentsModal
+        visible={chatVisible}
+        onClose={() => setChatVisible(false)}
+        planId={firstPlanId}
       />
 
       <TouchableOpacity
         style={styles.fab}
-        onPress={() => navigation.navigate('PlannerScreen', {
-          studentId: student.id,
-          studentName: student.full_name,
-        })}
+        onPress={() =>
+          navigation.navigate('PlannerScreen', {
+            studentId: studentProfile?.id || student.id,
+            studentName: studentProfile?.full_name || student.full_name,
+          })
+        }
         activeOpacity={0.85}
       >
-        <Ionicons name="add" size={24} color="#000" />
-        <Text style={styles.fabText}>NUEVO CICLO DE 30 DÍAS</Text>
+        <Ionicons name="calendar" size={22} color="#000" />
+
+        <Text style={styles.fabText}>
+          CONFIGURAR / EXTENDER PERÍODO
+        </Text>
       </TouchableOpacity>
     </View>
   );
 }
 
+/* ─────────────────────────────────────────────
+   STYLES
+───────────────────────────────────────────── */
+
 const styles = StyleSheet.create({
-  container: { flex: 1, backgroundColor: '#000' },
-  header: { flexDirection: 'row', alignItems: 'center', paddingTop: 60, paddingHorizontal: 20, marginBottom: 8, gap: 14 },
-  backBtn: { backgroundColor: '#111', padding: 10, borderRadius: 12 },
-  chatBtn: { backgroundColor: '#111', padding: 10, borderRadius: 12 },
-  headerLabel: { color: '#FFD700', fontSize: 9, fontWeight: '900', letterSpacing: 2 },
-  headerName: { color: '#fff', fontSize: 22, fontWeight: 'bold' },
-  listContent: { paddingHorizontal: 20, paddingBottom: 120 },
-  emptyState: { alignItems: 'center', marginTop: 80, gap: 8 },
-  emptyTitle: { color: '#fff', fontSize: 16, fontWeight: '700', marginTop: 10 },
+  container: {
+    flex: 1,
+    backgroundColor: '#000',
+  },
+
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingTop: 60,
+    paddingHorizontal: 20,
+    marginBottom: 8,
+    gap: 14,
+  },
+
+  backBtn: {
+    backgroundColor: '#111',
+    padding: 10,
+    borderRadius: 12,
+  },
+
+  chatBtn: {
+    backgroundColor: '#111',
+    padding: 10,
+    borderRadius: 12,
+  },
+
+  headerLabel: {
+    color: '#FFD700',
+    fontSize: 9,
+    fontWeight: '900',
+    letterSpacing: 2,
+  },
+
+  headerName: {
+    color: '#fff',
+    fontSize: 22,
+    fontWeight: 'bold',
+  },
+
+  listContent: {
+    paddingHorizontal: 20,
+    paddingBottom: 125,
+  },
+
+  sectionTitle: {
+    color: '#FFD700',
+    fontSize: 11,
+    fontWeight: '900',
+    letterSpacing: 1.5,
+    marginTop: 24,
+    marginBottom: 12,
+    textTransform: 'uppercase',
+  },
+
+  emptyState: {
+    alignItems: 'center',
+    marginTop: 50,
+    gap: 8,
+  },
+
+  emptyTitle: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '700',
+    marginTop: 10,
+  },
+
+  emptyText: {
+    color: '#555',
+    textAlign: 'center',
+    marginTop: 4,
+  },
+
   fab: {
-    position: 'absolute', bottom: 35, left: 20, right: 20,
-    backgroundColor: '#FFD700', flexDirection: 'row', justifyContent: 'center',
-    alignItems: 'center', paddingVertical: 20, borderRadius: 20, gap: 10,
+    position: 'absolute',
+    bottom: 35,
+    left: 20,
+    right: 20,
+    backgroundColor: '#FFD700',
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingVertical: 20,
+    borderRadius: 20,
+    gap: 10,
     elevation: 8,
   },
-  fabText: { color: '#000', fontWeight: '900', fontSize: 14, letterSpacing: 1 },
+
+  fabText: {
+    color: '#000',
+    fontWeight: '900',
+    fontSize: 14,
+    letterSpacing: 1,
+  },
+});
+
+const periodStyles = StyleSheet.create({
+  card: {
+    backgroundColor: '#0A0A0A',
+    borderWidth: 1,
+    borderColor: '#222',
+    borderRadius: 20,
+    padding: 18,
+    marginTop: 14,
+  },
+
+  topRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+  },
+
+  label: {
+    color: '#FFD700',
+    fontSize: 10,
+    fontWeight: '900',
+    letterSpacing: 1.5,
+  },
+
+  range: {
+    color: '#FFF',
+    fontSize: 20,
+    fontWeight: '900',
+    marginTop: 5,
+  },
+
+  statusBadge: {
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 10,
+    backgroundColor: '#222',
+  },
+
+  statusActive: {
+    backgroundColor: '#FFD70022',
+  },
+
+  statusExpired: {
+    backgroundColor: '#FF3B3022',
+  },
+
+  statusFuture: {
+    backgroundColor: '#2F80ED22',
+  },
+
+  statusText: {
+    color: '#FFD700',
+    fontSize: 10,
+    fontWeight: '900',
+  },
+
+  statsRow: {
+    flexDirection: 'row',
+    marginTop: 18,
+  },
+
+  statBox: {
+    flex: 1,
+    alignItems: 'center',
+  },
+
+  statValue: {
+    color: '#FFD700',
+    fontSize: 22,
+    fontWeight: '900',
+  },
+
+  statLabel: {
+    color: '#666',
+    fontSize: 10,
+    marginTop: 3,
+    textTransform: 'uppercase',
+    textAlign: 'center',
+  },
+
+  progressBg: {
+    height: 5,
+    backgroundColor: '#1A1A1A',
+    borderRadius: 3,
+    marginTop: 18,
+    overflow: 'hidden',
+  },
+
+  progressFill: {
+    height: 5,
+    backgroundColor: '#FFD700',
+    borderRadius: 3,
+  },
+
+  emptyIcon: {
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+
+  emptyTitle: {
+    color: '#FFF',
+    fontSize: 18,
+    fontWeight: '900',
+    textAlign: 'center',
+  },
+
+  emptyText: {
+    color: '#777',
+    textAlign: 'center',
+    marginTop: 8,
+    lineHeight: 20,
+  },
+});
+
+const historyStyles = StyleSheet.create({
+  card: {
+    backgroundColor: '#0A0A0A',
+    borderWidth: 1,
+    borderColor: '#222',
+    borderRadius: 16,
+    padding: 15,
+    marginBottom: 10,
+  },
+
+  topRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+  },
+
+  title: {
+    color: '#FFF',
+    fontWeight: '900',
+    fontSize: 15,
+  },
+
+  subtitle: {
+    color: '#666',
+    marginTop: 4,
+    fontSize: 12,
+  },
+
+  badge: {
+    backgroundColor: '#FFD70022',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 8,
+  },
+
+  badgeText: {
+    color: '#FFD700',
+    fontSize: 10,
+    fontWeight: '900',
+  },
+
+  statsRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginTop: 14,
+  },
+
+  statText: {
+    color: '#AAA',
+    fontSize: 12,
+    fontWeight: 'bold',
+  },
+
+  remainingText: {
+    color: '#FFD700',
+    fontSize: 12,
+    fontWeight: '900',
+  },
+
+  progressBg: {
+    height: 5,
+    backgroundColor: '#1A1A1A',
+    borderRadius: 3,
+    marginTop: 12,
+    overflow: 'hidden',
+  },
+
+  progressFill: {
+    height: 5,
+    backgroundColor: '#FFD700',
+    borderRadius: 3,
+  },
 });
 
 const weekStyles = StyleSheet.create({
-  wrapper: { marginBottom: 8, borderRadius: 16, overflow: 'hidden', backgroundColor: '#0a0a0a' },
-  bar: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', paddingVertical: 16, paddingHorizontal: 18, backgroundColor: '#111' },
-  barExpanded: { backgroundColor: '#FFD700' },
-  barActive: { borderLeftWidth: 3, borderLeftColor: '#FFD700' },
-  left: { flexDirection: 'row', alignItems: 'center', gap: 10 },
-  right: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  label: { color: '#fff', fontSize: 15, fontWeight: '700' },
-  labelExpanded: { color: '#000' },
-  numberBadge: { width: 26, height: 26, borderRadius: 8, backgroundColor: '#1a1a1a', borderWidth: 1, borderColor: '#333', justifyContent: 'center', alignItems: 'center' },
-  numberBadgeActive: { borderColor: '#FFD700', backgroundColor: '#FFD70022' },
-  numberBadgeExpanded: { borderColor: '#000', backgroundColor: 'transparent' },
-  numberBadgeText: { color: '#555', fontSize: 12, fontWeight: '900' },
-  activePill: { backgroundColor: '#FFD70033', paddingHorizontal: 7, paddingVertical: 3, borderRadius: 8 },
-  activePillText: { color: '#FFD700', fontSize: 9, fontWeight: '900', letterSpacing: 0.5 },
-  completedPill: { flexDirection: 'row', alignItems: 'center', gap: 3, backgroundColor: '#00ff8822', paddingHorizontal: 7, paddingVertical: 3, borderRadius: 8 },
-  completedPillText: { color: '#00ff88', fontSize: 9, fontWeight: '900', letterSpacing: 0.5 },
-  progressText: { color: '#555', fontSize: 11 },
-  progressBarBg: { height: 2, backgroundColor: '#1a1a1a' },
-  progressBarFill: { height: 2, backgroundColor: '#FFD700' },
-  sessionsContainer: { padding: 10, paddingTop: 6, backgroundColor: '#050505' },
+  wrapper: {
+    marginBottom: 9,
+    borderRadius: 16,
+    overflow: 'hidden',
+    backgroundColor: '#0A0A0A',
+  },
+
+  bar: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    paddingVertical: 16,
+    paddingHorizontal: 18,
+    backgroundColor: '#111',
+  },
+
+  barExpanded: {
+    backgroundColor: '#FFD700',
+  },
+
+  barActive: {
+    borderLeftWidth: 3,
+    borderLeftColor: '#FFD700',
+  },
+
+  left: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 10,
+    flex: 1,
+  },
+
+  right: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+  },
+
+  labelRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 6,
+  },
+
+  label: {
+    color: '#FFF',
+    fontSize: 15,
+    fontWeight: '800',
+  },
+
+  labelExpanded: {
+    color: '#000',
+  },
+
+  dateRange: {
+    color: '#555',
+    fontSize: 11,
+    marginTop: 2,
+  },
+
+  numberBadge: {
+    width: 28,
+    height: 28,
+    borderRadius: 9,
+    backgroundColor: '#1A1A1A',
+    borderWidth: 1,
+    borderColor: '#333',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+
+  numberBadgeActive: {
+    borderColor: '#FFD700',
+    backgroundColor: '#FFD70022',
+  },
+
+  numberBadgeExpanded: {
+    borderColor: '#000',
+    backgroundColor: 'transparent',
+  },
+
+  numberBadgeText: {
+    color: '#666',
+    fontSize: 12,
+    fontWeight: '900',
+  },
+
+  activePill: {
+    backgroundColor: '#FFD70033',
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+    borderRadius: 8,
+  },
+
+  activePillText: {
+    color: '#FFD700',
+    fontSize: 9,
+    fontWeight: '900',
+  },
+
+  completedPill: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 3,
+    backgroundColor: '#00ff8822',
+    paddingHorizontal: 7,
+    paddingVertical: 3,
+    borderRadius: 8,
+  },
+
+  completedPillText: {
+    color: '#00ff88',
+    fontSize: 9,
+    fontWeight: '900',
+  },
+
+  counter: {
+    color: '#555',
+    fontSize: 12,
+    fontWeight: '800',
+  },
+
+  sessionsContainer: {
+    padding: 10,
+    backgroundColor: '#050505',
+  },
+
+  emptyWeek: {
+    alignItems: 'center',
+    paddingVertical: 18,
+  },
+
+  emptyWeekText: {
+    color: '#555',
+    marginTop: 6,
+    fontSize: 13,
+  },
+
+  emptyWeekSubText: {
+    color: '#FFD700',
+    marginTop: 4,
+    fontSize: 12,
+    fontWeight: 'bold',
+  },
+
+  missingBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#191600',
+    borderWidth: 1,
+    borderColor: '#FFD70033',
+    borderRadius: 12,
+    padding: 12,
+    marginTop: 6,
+  },
+
+  missingText: {
+    color: '#FFD700',
+    marginLeft: 8,
+    fontSize: 12,
+    fontWeight: 'bold',
+  },
 });
 
-const cycleStyles = StyleSheet.create({
-  header: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'center', marginTop: 28, marginBottom: 14 },
-  left: { flexDirection: 'row', alignItems: 'center', gap: 12 },
-  numberBadge: { width: 36, height: 36, borderRadius: 10, backgroundColor: '#FFD70022', borderWidth: 1, borderColor: '#FFD70044', justifyContent: 'center', alignItems: 'center' },
-  numberText: { color: '#FFD700', fontSize: 16, fontWeight: '900' },
-  labelRow: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  label: { color: '#fff', fontSize: 15, fontWeight: '800' },
-  activeBadge: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#FFD70022', paddingHorizontal: 8, paddingVertical: 3, borderRadius: 8, gap: 4 },
-  activeDot: { width: 5, height: 5, borderRadius: 3, backgroundColor: '#FFD700' },
-  activeBadgeText: { color: '#FFD700', fontSize: 9, fontWeight: '900' },
-  dateRange: { color: '#444', fontSize: 11, marginTop: 2 },
-  counter: { color: '#333', fontSize: 12, fontWeight: '600' },
-});
+const wodStyles = StyleSheet.create({
+  card: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#111',
+    borderRadius: 14,
+    marginBottom: 8,
+    borderWidth: 1,
+    borderColor: '#1C1C1C',
+    overflow: 'hidden',
+  },
 
-const sessionStyles = StyleSheet.create({
-  card: { flexDirection: 'row', alignItems: 'center', backgroundColor: '#111', borderRadius: 14, marginBottom: 8, borderWidth: 1, borderColor: '#1c1c1c', overflow: 'hidden' },
-  statusBar: { width: 3, height: '100%', minHeight: 56, backgroundColor: '#222' },
-  info: { flex: 1, paddingVertical: 14, paddingHorizontal: 14 },
-  title: { color: '#fff', fontSize: 14, fontWeight: '700' },
-  date: { color: '#555', fontSize: 11 },
-  doneBadge: { width: 22, height: 22, borderRadius: 11, backgroundColor: '#FFD700', justifyContent: 'center', alignItems: 'center', marginRight: 14 },
-  statusBarDone: { backgroundColor: '#FFD700' },
+  statusBar: {
+    width: 3,
+    height: '100%',
+    minHeight: 58,
+    backgroundColor: '#222',
+  },
+
+  statusBarDone: {
+    backgroundColor: '#FFD700',
+  },
+
+  info: {
+    flex: 1,
+    paddingVertical: 14,
+    paddingHorizontal: 14,
+  },
+
+  title: {
+    color: '#FFF',
+    fontSize: 14,
+    fontWeight: '800',
+  },
+
+  date: {
+    color: '#555',
+    fontSize: 11,
+    marginTop: 3,
+  },
+
+  doneBadge: {
+    width: 22,
+    height: 22,
+    borderRadius: 11,
+    backgroundColor: '#FFD700',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 14,
+  },
 });
