@@ -448,7 +448,13 @@ function WeekRow({
 
               {expectedCount > 0 && (
                 <Text style={weekStyles.emptyWeekSubText}>
-                  Faltan {expectedCount} WODs esperados
+                  Semana {week.weekNumber}: 0 de {expectedCount} WODs cargados
+                </Text>
+              )}
+
+              {expectedCount > 0 && (
+                <Text style={weekStyles.emptyWeekSubText}>
+                  Faltan {expectedCount} por cargar
                 </Text>
               )}
             </View>
@@ -470,9 +476,15 @@ function WeekRow({
                     color="#FFD700"
                   />
 
-                  <Text style={weekStyles.missingText}>
-                    Faltan {missingCount} WODs para completar esta semana
-                  </Text>
+                  <View style={weekStyles.missingTextBox}>
+                    <Text style={weekStyles.missingText}>
+                      Semana {week.weekNumber}: {loadedCount} de {expectedCount} WODs cargados
+                    </Text>
+
+                    <Text style={weekStyles.missingSubText}>
+                      Faltan {missingCount} por cargar
+                    </Text>
+                  </View>
                 </View>
               )}
             </>
@@ -1229,11 +1241,22 @@ const weekStyles = StyleSheet.create({
     marginTop: 6,
   },
 
+  missingTextBox: {
+    flex: 1,
+    marginLeft: 8,
+  },
+
   missingText: {
     color: '#FFD700',
-    marginLeft: 8,
     fontSize: 12,
-    fontWeight: 'bold',
+    fontWeight: '900',
+  },
+
+  missingSubText: {
+    color: '#B8A800',
+    fontSize: 11,
+    fontWeight: '700',
+    marginTop: 3,
   },
 });
 

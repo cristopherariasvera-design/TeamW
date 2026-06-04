@@ -214,6 +214,7 @@ export default function StudentPlanScreen({ navigation }) {
   const [activePeriod, setActivePeriod] = useState(null);
   const [expandedWeeks, setExpandedWeeks] = useState({});
   const [viewMode, setViewMode] = useState('list');
+  const [unreadPlanIds, setUnreadPlanIds] = useState([]);
 
   const [periodStats, setPeriodStats] = useState({
     expected: 0,
@@ -263,6 +264,10 @@ export default function StudentPlanScreen({ navigation }) {
       ...prev,
       [weekNumber]: !prev[weekNumber],
     }));
+  };
+
+  const hasUnreadFeedback = (planId) => {
+    return unreadPlanIds.includes(planId);
   };
 
   const loadActivePeriod = async (firstDay, lastDay) => {
@@ -335,6 +340,40 @@ export default function StudentPlanScreen({ navigation }) {
     });
   };
 
+  const loadUnreadFeedback = async (planIds) => {
+    try {
+      if (!profile?.id || !planIds || planIds.length === 0) {
+        setUnreadPlanIds([]);
+        return;
+      }
+
+      const { data, error } = await supabase
+        .from('comments')
+        .select(`
+          id,
+          plan_id,
+          user_id,
+          sender_role,
+          is_read
+        `)
+        .in('plan_id', planIds)
+        .eq('is_read', false)
+        .eq('sender_role', 'coach')
+        .neq('user_id', profile.id);
+
+      if (error) throw error;
+
+      const ids = [
+        ...new Set((data || []).map((comment) => comment.plan_id)),
+      ];
+
+      setUnreadPlanIds(ids);
+    } catch (error) {
+      console.error('Error loading unread feedback:', error.message || error);
+      setUnreadPlanIds([]);
+    }
+  };
+
   const loadPlans = async () => {
     try {
       setLoading(true);
@@ -391,6 +430,8 @@ export default function StudentPlanScreen({ navigation }) {
       );
 
       setPlans(sanitized);
+
+      await loadUnreadFeedback(sanitized.map((plan) => plan.id));
 
       const built = groupByWeek(currentMonthPlans);
       const initial = {};
@@ -453,6 +494,16 @@ export default function StudentPlanScreen({ navigation }) {
 
     return acc;
   }, {});
+
+  const renderUnreadBadge = () => (
+    <View style={styles.unreadFeedbackBadge}>
+      <View style={styles.unreadDot} />
+
+      <Text style={styles.unreadFeedbackText}>
+        Respuesta nueva
+      </Text>
+    </View>
+  );
 
   const renderViewToggle = () => (
     <View style={styles.viewToggle}>
@@ -663,6 +714,9 @@ export default function StudentPlanScreen({ navigation }) {
           const doneCount = sessions.filter((session) => session.is_done).length;
           const allDone = doneCount === sessions.length && sessions.length > 0;
           const isExpanded = !!expandedWeeks[weekNumber];
+          const weekHasUnread = sessions.some((session) =>
+            hasUnreadFeedback(session.id)
+          );
 
           return (
             <View
@@ -717,6 +771,10 @@ export default function StudentPlanScreen({ navigation }) {
                             ACTUAL
                           </Text>
                         </View>
+                      )}
+
+                      {weekHasUnread && (
+                        <View style={styles.weekUnreadDot} />
                       )}
                     </View>
 
@@ -773,6 +831,7 @@ export default function StudentPlanScreen({ navigation }) {
                   {sessions.map((plan) => {
                     const planDate = parseDate(plan.date);
                     const isDone = plan.is_done;
+                    const unread = hasUnreadFeedback(plan.id);
 
                     return (
                       <TouchableOpacity
@@ -780,6 +839,7 @@ export default function StudentPlanScreen({ navigation }) {
                         style={[
                           styles.sessionCard,
                           isDone && styles.sessionCardDone,
+                          unread && styles.sessionCardUnread,
                         ]}
                         onPress={() =>
                           navigation.navigate('DayDetail', { plan })
@@ -790,6 +850,7 @@ export default function StudentPlanScreen({ navigation }) {
                           style={[
                             styles.statusBar,
                             isDone && styles.statusBarDone,
+                            unread && styles.statusBarUnread,
                           ]}
                         />
 
@@ -820,6 +881,8 @@ export default function StudentPlanScreen({ navigation }) {
                               {plan.sections.length !== 1 ? 's' : ''} de entrenamiento
                             </Text>
                           )}
+
+                          {unread && renderUnreadBadge()}
                         </View>
 
                         {isDone ? (
@@ -827,6 +890,12 @@ export default function StudentPlanScreen({ navigation }) {
                             name="checkmark-circle"
                             size={24}
                             color="#00ff88"
+                          />
+                        ) : unread ? (
+                          <Ionicons
+                            name="chatbubble-ellipses"
+                            size={22}
+                            color="#FF3B30"
                           />
                         ) : (
                           <Ionicons
@@ -870,6 +939,9 @@ export default function StudentPlanScreen({ navigation }) {
             const isCurrentMonth = day.getMonth() + 1 === selectedMonth;
             const isToday = iso === toISO(new Date());
             const doneCount = dayPlans.filter((plan) => plan.is_done).length;
+            const hasUnreadOnDay = dayPlans.some((plan) =>
+              hasUnreadFeedback(plan.id)
+            );
 
             return (
               <View
@@ -878,6 +950,7 @@ export default function StudentPlanScreen({ navigation }) {
                   styles.calendarCell,
                   !isCurrentMonth && styles.calendarCellMuted,
                   dayPlans.length > 0 && styles.calendarCellWithPlans,
+                  hasUnreadOnDay && styles.calendarCellUnread,
                   isToday && styles.calendarCellToday,
                 ]}
               >
@@ -898,6 +971,7 @@ export default function StudentPlanScreen({ navigation }) {
                         styles.calendarCountBadge,
                         doneCount === dayPlans.length &&
                           styles.calendarCountBadgeDone,
+                        hasUnreadOnDay && styles.calendarCountBadgeUnread,
                       ]}
                     >
                       <Text style={styles.calendarCountText}>
@@ -908,29 +982,39 @@ export default function StudentPlanScreen({ navigation }) {
                 </View>
 
                 <View style={styles.calendarPlansList}>
-                  {dayPlans.slice(0, 2).map((plan) => (
-                    <TouchableOpacity
-                      key={plan.id}
-                      style={[
-                        styles.calendarPlanChip,
-                        plan.is_done && styles.calendarPlanChipDone,
-                      ]}
-                      onPress={() =>
-                        navigation.navigate('DayDetail', { plan })
-                      }
-                      activeOpacity={0.85}
-                    >
-                      <Text
+                  {dayPlans.slice(0, 2).map((plan) => {
+                    const unread = hasUnreadFeedback(plan.id);
+
+                    return (
+                      <TouchableOpacity
+                        key={plan.id}
                         style={[
-                          styles.calendarPlanTitle,
-                          plan.is_done && styles.calendarPlanTitleDone,
+                          styles.calendarPlanChip,
+                          plan.is_done && styles.calendarPlanChipDone,
+                          unread && styles.calendarPlanChipUnread,
                         ]}
-                        numberOfLines={1}
+                        onPress={() =>
+                          navigation.navigate('DayDetail', { plan })
+                        }
+                        activeOpacity={0.85}
                       >
-                        {plan.title || plan.day_name || 'WOD'}
-                      </Text>
-                    </TouchableOpacity>
-                  ))}
+                        <View style={styles.calendarPlanChipContent}>
+                          <Text
+                            style={[
+                              styles.calendarPlanTitle,
+                              plan.is_done && styles.calendarPlanTitleDone,
+                              unread && styles.calendarPlanTitleUnread,
+                            ]}
+                            numberOfLines={1}
+                          >
+                            {plan.title || plan.day_name || 'WOD'}
+                          </Text>
+
+                          {unread && <View style={styles.calendarUnreadDot} />}
+                        </View>
+                      </TouchableOpacity>
+                    );
+                  })}
 
                   {dayPlans.length > 2 && (
                     <Text style={styles.calendarMoreText}>
@@ -1337,6 +1421,13 @@ const styles = StyleSheet.create({
     color: '#FFD700',
   },
 
+  weekUnreadDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#FF3B30',
+  },
+
   weekRange: {
     color: '#fff',
     fontSize: 11,
@@ -1393,6 +1484,11 @@ const styles = StyleSheet.create({
     borderColor: '#00ff8822',
   },
 
+  sessionCardUnread: {
+    borderColor: '#FF3B3066',
+    backgroundColor: '#100606',
+  },
+
   statusBar: {
     width: 3,
     alignSelf: 'stretch',
@@ -1401,6 +1497,10 @@ const styles = StyleSheet.create({
 
   statusBarDone: {
     backgroundColor: '#00ff88',
+  },
+
+  statusBarUnread: {
+    backgroundColor: '#FF3B30',
   },
 
   sessionBody: {
@@ -1438,6 +1538,33 @@ const styles = StyleSheet.create({
     color: '#333',
     fontSize: 11,
     fontStyle: 'italic',
+  },
+
+  unreadFeedbackBadge: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    alignSelf: 'flex-start',
+    backgroundColor: '#FF3B3022',
+    borderWidth: 1,
+    borderColor: '#FF3B3066',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 999,
+    marginTop: 8,
+  },
+
+  unreadDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: '#FF3B30',
+    marginRight: 5,
+  },
+
+  unreadFeedbackText: {
+    color: '#FF6B61',
+    fontSize: 10,
+    fontWeight: '900',
   },
 
   currentBadge: {
@@ -1509,6 +1636,11 @@ const styles = StyleSheet.create({
     borderColor: '#302A00',
   },
 
+  calendarCellUnread: {
+    backgroundColor: '#160707',
+    borderColor: '#FF3B3066',
+  },
+
   calendarCellToday: {
     borderColor: '#FFD700',
     borderWidth: 1,
@@ -1548,6 +1680,10 @@ const styles = StyleSheet.create({
     backgroundColor: '#00ff88',
   },
 
+  calendarCountBadgeUnread: {
+    backgroundColor: '#FF3B30',
+  },
+
   calendarCountText: {
     color: '#000',
     fontSize: 9,
@@ -1570,14 +1706,36 @@ const styles = StyleSheet.create({
     backgroundColor: '#002617',
   },
 
+  calendarPlanChipUnread: {
+    backgroundColor: '#2A0808',
+  },
+
+  calendarPlanChipContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+
   calendarPlanTitle: {
     color: '#FFD700',
     fontSize: 8,
     fontWeight: '900',
+    flex: 1,
   },
 
   calendarPlanTitleDone: {
     color: '#00ff88',
+  },
+
+  calendarPlanTitleUnread: {
+    color: '#FF6B61',
+  },
+
+  calendarUnreadDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: '#FF3B30',
+    marginLeft: 4,
   },
 
   calendarMoreText: {

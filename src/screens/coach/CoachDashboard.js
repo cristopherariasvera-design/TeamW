@@ -57,6 +57,7 @@ export default function CoachDashboard({ navigation }) {
     ).length;
 
     const remaining = Math.max(totalExpected - loaded, 0);
+
     const progress =
       totalExpected > 0
         ? Math.min(loaded / totalExpected, 1)
@@ -69,6 +70,24 @@ export default function CoachDashboard({ navigation }) {
       remaining,
       progress,
     };
+  };
+
+  const getStudentPlanIds = (student, plans = []) => {
+    return plans
+      .filter((plan) => {
+        if (plan.student_id !== student.id) return false;
+
+        if (student.plan_start_date && student.plan_end_date) {
+          return isDateInRange(
+            plan.date,
+            student.plan_start_date,
+            student.plan_end_date
+          );
+        }
+
+        return true;
+      })
+      .map((plan) => plan.id);
   };
 
   const fetchStudents = async () => {
@@ -104,6 +123,7 @@ export default function CoachDashboard({ navigation }) {
       const studentIds = cleanProfiles.map((student) => student.id);
 
       let calendarWods = [];
+      let unreadComments = [];
 
       if (studentIds.length > 0) {
         const { data: plansData, error: plansError } = await supabase
@@ -122,30 +142,48 @@ export default function CoachDashboard({ navigation }) {
         if (plansError) throw plansError;
 
         calendarWods = plansData || [];
-      }
 
-      const studentsWithData = await Promise.all(
-        cleanProfiles.map(async (student) => {
-          const { count } = await supabase
+        const planIds = calendarWods.map((plan) => plan.id);
+
+        if (planIds.length > 0) {
+          const { data: commentsData, error: commentsError } = await supabase
             .from('comments')
-            .select('*', { count: 'exact', head: true })
-            .eq('user_id', student.id)
+            .select(`
+              id,
+              plan_id,
+              user_id,
+              sender_role,
+              is_read
+            `)
+            .in('plan_id', planIds)
             .eq('is_read', false)
+            .neq('user_id', profile.id)
             .eq('sender_role', 'alumno');
 
-          const progress = getPlanProgress(student, calendarWods);
+          if (commentsError) throw commentsError;
 
-          return {
-            ...student,
-            hasNewMessages: count > 0,
-            planProgress: progress,
-          };
-        })
-      );
+          unreadComments = commentsData || [];
+        }
+      }
+
+      const studentsWithData = cleanProfiles.map((student) => {
+        const progress = getPlanProgress(student, calendarWods);
+        const studentPlanIds = getStudentPlanIds(student, calendarWods);
+
+        const hasNewMessages = unreadComments.some((comment) =>
+          studentPlanIds.includes(comment.plan_id)
+        );
+
+        return {
+          ...student,
+          hasNewMessages,
+          planProgress: progress,
+        };
+      });
 
       setStudents(studentsWithData);
     } catch (error) {
-      console.error('Error al cargar alumnos:', error.message);
+      console.error('Error al cargar alumnos:', error.message || error);
     } finally {
       setLoading(false);
       setRefreshing(false);
