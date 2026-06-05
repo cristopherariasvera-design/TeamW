@@ -1,130 +1,388 @@
 import React, { useState, useCallback } from 'react';
-import { 
-  View, Text, FlatList, StyleSheet, TouchableOpacity, 
-  ActivityIndicator, RefreshControl, TextInput, Modal, 
-  ScrollView, Alert, KeyboardAvoidingView, Platform,
-  SafeAreaView
+import {
+  View,
+  Text,
+  ScrollView,
+  StyleSheet,
+  TouchableOpacity,
+  ActivityIndicator,
+  RefreshControl,
+  TextInput,
+  Modal,
+  Alert,
+  KeyboardAvoidingView,
+  Platform,
+  SafeAreaView,
 } from 'react-native';
 import { supabase } from '../../config/supabaseClient';
 import { createClient } from '@supabase/supabase-js';
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
 
-const SUPABASE_URL = 'https://khrzhzeqdbizbmqdwebw.supabase.co';
-const SUPABASE_SERVICE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImtocnpoemVxZGJpemJtcWR3ZWJ3Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3Njk3MDE0ODMsImV4cCI6MjA4NTI3NzQ4M30.au0_SWWVZMKtU7uokYgV4gI-KZMf45rEBOe_tm1WtDE';
+/*
+  Cliente aislado para crear usuarios sin cambiar la sesión del admin.
+  Si tu supabaseClient no expone supabaseUrl/supabaseKey,
+  el alta mostrará alerta.
+*/
+const isolatedAuthClient =
+  supabase?.supabaseUrl && supabase?.supabaseKey
+    ? createClient(supabase.supabaseUrl, supabase.supabaseKey, {
+        auth: {
+          persistSession: false,
+          autoRefreshToken: false,
+          detectSessionInUrl: false,
+        },
+      })
+    : null;
 
-const supabaseAdmin = createClient(SUPABASE_URL, SUPABASE_SERVICE_KEY, {
-  auth: { persistSession: false, autoRefreshToken: false, detectSessionInUrl: false }
-});
+const levels = [
+  { id: 'Beginner', label: 'Beginner', icon: 'fitness-outline' },
+  { id: 'Rookie', label: 'Rookie', icon: 'trophy-outline' },
+  { id: 'Scaled', label: 'Scaled', icon: 'barbell-outline' },
+  { id: 'RX', label: 'RX', icon: 'flame-outline' },
+];
+
+const toDate = (dateString) => {
+  if (!dateString) return null;
+  return new Date(`${dateString}T12:00:00`);
+};
+
+const fmtDate = (dateString) => {
+  const date = toDate(dateString);
+
+  if (!date) return 'Sin fecha';
+
+  return date
+    .toLocaleDateString('es-ES', {
+      day: 'numeric',
+      month: 'short',
+      year: 'numeric',
+    })
+    .replace('.', '');
+};
+
+const getWeeksBetween = (startDate, endDate) => {
+  if (!startDate || !endDate) return 0;
+
+  const start = toDate(startDate);
+  const end = toDate(endDate);
+
+  const diffMs = end - start;
+  const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24)) + 1;
+
+  return Math.max(1, Math.ceil(diffDays / 7));
+};
+
+const isDateInRange = (date, startDate, endDate) => {
+  if (!date || !startDate || !endDate) return false;
+
+  return date >= startDate && date <= endDate;
+};
+
+const getPlanStatus = (student) => {
+  if (!student.plan_start_date || !student.plan_end_date) {
+    return 'no_plan';
+  }
+
+  const today = new Date();
+  today.setHours(12, 0, 0, 0);
+
+  const start = toDate(student.plan_start_date);
+  const end = toDate(student.plan_end_date);
+
+  if (today < start) return 'future';
+  if (today > end) return 'expired';
+
+  return 'active';
+};
+
+const getStatusConfig = (status) => {
+  switch (status) {
+    case 'Active':
+      return {
+        label: 'Activo',
+        color: '#00ff88',
+        bg: '#002414',
+        border: '#00ff8844',
+      };
+
+    case 'Inactive':
+    default:
+      return {
+        label: 'Inactivo',
+        color: '#777',
+        bg: '#111',
+        border: '#333',
+      };
+  }
+};
+
+const getPlanConfig = (planStatus) => {
+  switch (planStatus) {
+    case 'active':
+      return {
+        label: 'Plan activo',
+        color: '#FFD700',
+        icon: 'calendar-outline',
+      };
+
+    case 'future':
+      return {
+        label: 'Plan futuro',
+        color: '#2F80ED',
+        icon: 'time-outline',
+      };
+
+    case 'expired':
+      return {
+        label: 'Plan vencido',
+        color: '#FF4444',
+        icon: 'alert-circle-outline',
+      };
+
+    case 'no_plan':
+    default:
+      return {
+        label: 'Sin período',
+        color: '#777',
+        icon: 'calendar-clear-outline',
+      };
+  }
+};
 
 export default function StudentManagement({ route, navigation }) {
   const { coachId: filterCoachId, coachName } = route.params || {};
 
   const [students, setStudents] = useState([]);
   const [filteredStudents, setFilteredStudents] = useState([]);
+  const [coaches, setCoaches] = useState([]);
+
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
+  const [saving, setSaving] = useState(false);
+
   const [search, setSearch] = useState('');
+  const [statusFilter, setStatusFilter] = useState('all');
+
   const [modalVisible, setModalVisible] = useState(false);
   const [isEditing, setIsEditing] = useState(false);
   const [selectedId, setSelectedId] = useState(null);
-  const [coaches, setCoaches] = useState([]);
-  const [saving, setSaving] = useState(false);
-  const [formData, setFormData] = useState({ 
-    name: '', email: '', password: '', level: 'Beginner', goal: '', coach_id: null 
-  });
 
-  const levels = [
-    { id: 'Beginner', label: 'Beginner', icon: 'fitness-outline' },
-    { id: 'Rookie', label: 'Rookie', icon: 'trophy-outline' },
-    { id: 'Scaled', label: 'Scaled', icon: 'barbell-outline' },
-    { id: 'RX', label: 'RX', icon: 'flame-outline' },
-  ];
+  const [formData, setFormData] = useState({
+    name: '',
+    email: '',
+    password: '',
+    level: 'Beginner',
+    goal: '',
+    coach_id: null,
+  });
 
   useFocusEffect(
     useCallback(() => {
-      fetchStudents();
-      fetchCoaches();
+      fetchInitialData();
     }, [filterCoachId])
   );
 
-  const fetchStudents = async () => {
+  const fetchInitialData = async () => {
     try {
       setLoading(true);
-      let query = supabase.from('profiles').select('*').eq('role', 'alumno');
-      if (filterCoachId) query = query.eq('coach_id', filterCoachId);
-      const { data, error } = await query.order('full_name', { ascending: true });
-      if (error) throw error;
-      setStudents(data || []);
-      setFilteredStudents(data || []);
+
+      const [coachesResult, studentsResult] = await Promise.all([
+        supabase
+          .from('profiles')
+          .select('id, full_name')
+          .eq('role', 'coach')
+          .order('full_name', { ascending: true }),
+
+        fetchStudentsData(),
+      ]);
+
+      if (coachesResult.error) throw coachesResult.error;
+
+      setCoaches(coachesResult.data || []);
+
+      const studentsWithData = studentsResult || [];
+
+      setStudents(studentsWithData);
+      applyFilters(studentsWithData, search, statusFilter);
     } catch (error) {
-      console.error(error);
+      console.error('Error cargando atletas:', error.message || error);
+      Alert.alert('Error', 'No se pudieron cargar los atletas.');
     } finally {
       setLoading(false);
       setRefreshing(false);
     }
   };
 
-  const fetchCoaches = async () => {
-    const { data } = await supabase
-      .from('profiles').select('id, full_name')
-      .eq('role', 'coach').eq('status', 'Active');
-    setCoaches(data || []);
+  const fetchStudentsData = async () => {
+    let query = supabase
+      .from('profiles')
+      .select(`
+        id,
+        full_name,
+        email,
+        role,
+        status,
+        level,
+        goal,
+        box_city,
+        coach_id,
+        plan_start_date,
+        plan_end_date,
+        sessions_per_week,
+        plan_weeks,
+        weight,
+        height
+      `)
+      .eq('role', 'alumno')
+      .order('full_name', { ascending: true });
+
+    if (filterCoachId) {
+      query = query.eq('coach_id', filterCoachId);
+    }
+
+    const { data: studentsData, error: studentsError } = await query;
+
+    if (studentsError) throw studentsError;
+
+    const cleanStudents = studentsData || [];
+
+    const studentIds = cleanStudents.map((student) => student.id);
+
+    const coachIds = [
+      ...new Set(
+        cleanStudents
+          .map((student) => student.coach_id)
+          .filter(Boolean)
+      ),
+    ];
+
+    let coachProfiles = [];
+    let plans = [];
+
+    if (coachIds.length > 0) {
+      const { data: coachData, error: coachError } = await supabase
+        .from('profiles')
+        .select('id, full_name')
+        .in('id', coachIds);
+
+      if (coachError) throw coachError;
+
+      coachProfiles = coachData || [];
+    }
+
+    if (studentIds.length > 0) {
+      const { data: plansData, error: plansError } = await supabase
+        .from('plans')
+        .select('id, student_id, date, is_done, source, plan_type')
+        .in('student_id', studentIds)
+        .eq('source', 'calendar_wod')
+        .eq('plan_type', 'wod');
+
+      if (plansError) throw plansError;
+
+      plans = plansData || [];
+    }
+
+    return cleanStudents.map((student) => {
+      const coach = coachProfiles.find((item) => item.id === student.coach_id);
+
+      const weeks =
+        Number(student.plan_weeks || 0) ||
+        getWeeksBetween(student.plan_start_date, student.plan_end_date);
+
+      const sessionsPerWeek = Number(student.sessions_per_week || 0);
+      const expected = sessionsPerWeek * weeks;
+
+      const periodPlans =
+        student.plan_start_date && student.plan_end_date
+          ? plans.filter(
+              (plan) =>
+                plan.student_id === student.id &&
+                isDateInRange(
+                  plan.date,
+                  student.plan_start_date,
+                  student.plan_end_date
+                )
+            )
+          : [];
+
+      const loaded = periodPlans.length;
+      const completed = periodPlans.filter((plan) => plan.is_done).length;
+      const remaining = Math.max(expected - loaded, 0);
+      const progress = expected > 0 ? Math.min(loaded / expected, 1) : 0;
+
+      return {
+        ...student,
+        coachName: coach?.full_name || 'Sin coach',
+        expected,
+        loaded,
+        completed,
+        remaining,
+        progress,
+        planStatus: getPlanStatus(student),
+      };
+    });
+  };
+
+  const applyFilters = (source, text, selectedFilter = statusFilter) => {
+    const normalized = text.trim().toLowerCase();
+
+    let filtered = [...source];
+
+    if (selectedFilter === 'active') {
+      filtered = filtered.filter((student) => student.status === 'Active');
+    }
+
+    if (selectedFilter === 'inactive') {
+      filtered = filtered.filter((student) => student.status !== 'Active');
+    }
+
+    if (selectedFilter === 'with_plan') {
+      filtered = filtered.filter((student) => student.planStatus !== 'no_plan');
+    }
+
+    if (normalized) {
+      filtered = filtered.filter((student) => {
+        return (
+          student.full_name?.toLowerCase().includes(normalized) ||
+          student.email?.toLowerCase().includes(normalized) ||
+          student.level?.toLowerCase().includes(normalized) ||
+          student.coachName?.toLowerCase().includes(normalized) ||
+          student.box_city?.toLowerCase().includes(normalized)
+        );
+      });
+    }
+
+    setFilteredStudents(filtered);
   };
 
   const handleSearch = (text) => {
     setSearch(text);
-    const filtered = students.filter(s => 
-      s.full_name.toLowerCase().includes(text.toLowerCase()) || 
-      (s.email && s.email.toLowerCase().includes(text.toLowerCase()))
-    );
-    setFilteredStudents(filtered);
+    applyFilters(students, text, statusFilter);
   };
 
-  const checkIsExpired = (date) => {
-    if (!date) return false;
-    return new Date(date) < new Date();
+  const handleStatusFilter = (nextFilter) => {
+    setStatusFilter(nextFilter);
+    applyFilters(students, search, nextFilter);
   };
 
-  const toggleStatus = async (id, currentStatus) => {
-    const nextStatus = currentStatus === 'Active' ? 'Inactive' : 'Active';
-    try {
-      const { error } = await supabase.from('profiles').update({ status: nextStatus }).eq('id', id);
-      if (error) throw error;
-      fetchStudents();
-    } catch (e) {
-      Alert.alert("Error", "No se pudo cambiar el estado.");
-    }
-  };
-
-  const handleDelete = (item) => {
-    Alert.alert(
-      'Eliminar Atleta',
-      `¿Estás seguro que quieres eliminar a ${item.full_name}?\nEsta acción eliminará también todos sus planes y no se puede deshacer.`,
-      [
-        { text: 'Cancelar', style: 'cancel' },
-        {
-          text: 'Eliminar',
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              const { error } = await supabaseAdmin.auth.admin.deleteUser(item.id);
-              if (error) throw error;
-              fetchStudents();
-              Alert.alert('Eliminado', `${item.full_name} fue eliminado correctamente.`);
-            } catch (e) {
-              Alert.alert('Error', e.message);
-            }
-          }
-        }
-      ]
-    );
+  const refreshList = () => {
+    setRefreshing(true);
+    fetchInitialData();
   };
 
   const openAddModal = () => {
     setIsEditing(false);
     setSelectedId(null);
-    setFormData({ name: '', email: '', password: '', level: 'Beginner', goal: '', coach_id: null });
+    setFormData({
+      name: '',
+      email: '',
+      password: '',
+      level: 'Beginner',
+      goal: '',
+      coach_id: filterCoachId || null,
+    });
     setModalVisible(true);
   };
 
@@ -132,281 +390,566 @@ export default function StudentManagement({ route, navigation }) {
     setIsEditing(true);
     setSelectedId(item.id);
     setFormData({
-      name: item.full_name,
-      email: item.email,
-      password: '*****', 
+      name: item.full_name || '',
+      email: item.email || '',
+      password: '',
       level: item.level || 'Beginner',
       goal: item.goal || '',
-      coach_id: item.coach_id
+      coach_id: item.coach_id || null,
     });
     setModalVisible(true);
   };
 
-  const handleSave = async () => {
-    const { name, email, password, level, goal, coach_id } = formData;
-    if (!name || !coach_id || (!isEditing && (!email || !password))) {
-      Alert.alert("Campos incompletos", "Por favor rellena todos los datos y selecciona un coach.");
-      return;
-    }
-    setSaving(true);
+  const toggleStatus = async (id, currentStatus) => {
+    const nextStatus = currentStatus === 'Active' ? 'Inactive' : 'Active';
+
     try {
-      if (isEditing) {
-        const { error } = await supabase.from('profiles')
-          .update({ full_name: name, level, goal, coach_id }).eq('id', selectedId);
-        if (error) throw error;
-        Alert.alert("Éxito", "Atleta actualizado.");
-      } else {
-        const { data: authData, error: authError } = await supabaseAdmin.auth.signUp({ 
-          email: email.trim(), password 
-        });
-        if (authError) throw authError;
-        if (authData.user) {
-          await supabase.from('profiles').update({ 
-            full_name: name, role: 'alumno', status: 'Active', 
-            level, goal, coach_id, box_city: 'Santiago' 
-          }).eq('id', authData.user.id);
-          Alert.alert("Éxito", "Nuevo atleta registrado.");
-        }
-      }
-      setModalVisible(false);
-      fetchStudents();
+      const { error } = await supabase
+        .from('profiles')
+        .update({ status: nextStatus })
+        .eq('id', id);
+
+      if (error) throw error;
+
+      await fetchInitialData();
     } catch (error) {
-      Alert.alert("Error", error.message);
-    } finally { 
-      setSaving(false); 
+      console.error('Error cambiando estado:', error.message || error);
+      Alert.alert('Error', 'No se pudo cambiar el estado del atleta.');
     }
   };
 
-  return (
-    // ✅ FIX 1: SafeAreaView con flex:1 asegura que ocupa toda la pantalla
-    <SafeAreaView style={styles.container}>
+  const handleSave = async () => {
+    const { name, email, password, level, goal, coach_id } = formData;
 
-      {/* HEADER */}
+    if (!name.trim() || !coach_id) {
+      Alert.alert(
+        'Campos incompletos',
+        'Debes ingresar nombre y seleccionar un coach.'
+      );
+      return;
+    }
+
+    if (!isEditing && (!email.trim() || !password.trim())) {
+      Alert.alert(
+        'Campos incompletos',
+        'Debes ingresar email y contraseña para crear un atleta.'
+      );
+      return;
+    }
+
+    try {
+      setSaving(true);
+
+      if (isEditing) {
+        const { error } = await supabase
+          .from('profiles')
+          .update({
+            full_name: name.trim(),
+            level,
+            goal: goal.trim(),
+            coach_id,
+          })
+          .eq('id', selectedId);
+
+        if (error) throw error;
+
+        Alert.alert('Éxito', 'Atleta actualizado correctamente.');
+      } else {
+        if (!isolatedAuthClient) {
+          Alert.alert(
+            'Falta configuración',
+            'No se pudo crear el cliente aislado para registrar usuarios. Revisa supabaseClient.'
+          );
+          return;
+        }
+
+        const { data: authData, error: authError } =
+          await isolatedAuthClient.auth.signUp({
+            email: email.trim(),
+            password: password.trim(),
+          });
+
+        if (authError) throw authError;
+
+        if (!authData?.user?.id) {
+          throw new Error('No se pudo obtener el usuario creado.');
+        }
+
+        const { error: profileError } = await supabase
+          .from('profiles')
+          .upsert({
+            id: authData.user.id,
+            full_name: name.trim(),
+            email: email.trim(),
+            role: 'alumno',
+            status: 'Active',
+            level,
+            goal: goal.trim(),
+            coach_id,
+            box_city: 'Santiago',
+          });
+
+        if (profileError) throw profileError;
+
+        Alert.alert('Éxito', 'Nuevo atleta registrado correctamente.');
+      }
+
+      setModalVisible(false);
+      await fetchInitialData();
+    } catch (error) {
+      console.error('Error guardando atleta:', error.message || error);
+      Alert.alert('Error', error.message || 'No se pudo guardar el atleta.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const stats = {
+    total: students.length,
+    active: students.filter((item) => item.status === 'Active').length,
+    inactive: students.filter((item) => item.status !== 'Active').length,
+    withPlan: students.filter((item) => item.planStatus !== 'no_plan').length,
+  };
+
+  const renderStatCard = ({ filterKey, value, label, color }) => {
+    const isActive = statusFilter === filterKey;
+
+    return (
+      <TouchableOpacity
+        style={[
+          styles.statCard,
+          isActive && styles.statCardActive,
+          isActive && { borderColor: color },
+        ]}
+        onPress={() => handleStatusFilter(filterKey)}
+        activeOpacity={0.85}
+      >
+        <Text style={[styles.statValue, { color }]}>
+          {value}
+        </Text>
+
+        <Text style={styles.statLabel}>
+          {label}
+        </Text>
+      </TouchableOpacity>
+    );
+  };
+
+  const renderHeader = () => (
+    <>
       <View style={styles.header}>
         <View style={{ flex: 1 }}>
-          <TouchableOpacity onPress={() => navigation.goBack()} style={styles.backButton}>
-            <Ionicons name="arrow-back" size={24} color="#FFD700" style={{ marginRight: 10 }} />
+          <TouchableOpacity
+            onPress={() => navigation.goBack()}
+            style={styles.backButton}
+            activeOpacity={0.85}
+          >
+            <Ionicons
+              name="arrow-back"
+              size={24}
+              color="#FFD700"
+              style={{ marginRight: 10 }}
+            />
+
             <Text style={styles.title}>
-              {coachName ? `Team ${coachName.split(' ')[0]}` : 'Atletas'}
+              {coachName ? `Team ${coachName.split(' ')[0]}` : 'Gestionar Atletas'}
             </Text>
           </TouchableOpacity>
-          <Text style={styles.subtitle}>{filteredStudents.length} atletas encontrados</Text>
+
+          <Text style={styles.subtitle}>
+            {filteredStudents.length} atletas encontrados
+          </Text>
         </View>
-        <TouchableOpacity style={styles.addButton} onPress={openAddModal}>
+
+        <TouchableOpacity
+          style={styles.addButton}
+          onPress={openAddModal}
+          activeOpacity={0.85}
+        >
           <Ionicons name="add" size={28} color="#000" />
         </TouchableOpacity>
       </View>
 
-      {/* BUSCADOR */}
+      <View style={styles.statsRow}>
+        {renderStatCard({
+          filterKey: 'all',
+          value: stats.total,
+          label: 'Total',
+          color: '#FFD700',
+        })}
+
+        {renderStatCard({
+          filterKey: 'active',
+          value: stats.active,
+          label: 'Activos',
+          color: '#00ff88',
+        })}
+
+        {renderStatCard({
+          filterKey: 'inactive',
+          value: stats.inactive,
+          label: 'Inactivos',
+          color: '#777',
+        })}
+
+        {renderStatCard({
+          filterKey: 'with_plan',
+          value: stats.withPlan,
+          label: 'Con plan',
+          color: '#FFD700',
+        })}
+      </View>
+
       <View style={styles.searchContainer}>
         <Ionicons name="search" size={20} color="#666" />
+
         <TextInput
           style={styles.searchInput}
-          placeholder="Buscar atleta..."
+          placeholder="Buscar atleta, coach o nivel..."
           placeholderTextColor="#444"
           value={search}
           onChangeText={handleSearch}
         />
+
         {search.length > 0 && (
           <TouchableOpacity onPress={() => handleSearch('')}>
             <Ionicons name="close-circle" size={18} color="#444" />
           </TouchableOpacity>
         )}
       </View>
+    </>
+  );
 
-      {/* ✅ FIX 2: FlatList con flex:1 para que ocupe el espacio restante y pueda hacer scroll */}
-      {/* ✅ FIX 3: Eliminado scrollEnabled={!modalVisible} — era el culpable principal */}
-      <FlatList
-        style={styles.list}
-        data={filteredStudents}
-        keyExtractor={(item) => item.id}
-        showsVerticalScrollIndicator={false}
-        refreshControl={
-          <RefreshControl refreshing={refreshing} onRefresh={fetchStudents} tintColor="#FFD700" />
-        }
-        contentContainerStyle={styles.listContent}
-        ListEmptyComponent={
-          !loading && (
-            <View style={styles.emptyState}>
-              <Ionicons name="people-outline" size={48} color="#222" />
-              <Text style={styles.emptyText}>
-                {search ? 'Sin resultados' : 'No hay atletas registrados'}
+  const renderStudent = ({ item }) => {
+    const isActive = item.status === 'Active';
+    const statusConfig = getStatusConfig(item.status);
+    const planConfig = getPlanConfig(item.planStatus);
+
+    return (
+      <View
+        style={[
+          styles.card,
+          !isActive && styles.cardInactive,
+          item.planStatus === 'expired' && isActive && styles.cardExpired,
+        ]}
+      >
+        <TouchableOpacity
+          style={styles.cardMain}
+          onPress={() => navigation.navigate('Planner', { student: item })}
+          activeOpacity={0.85}
+        >
+          <View style={styles.avatar}>
+            <Text style={styles.avatarText}>
+              {item.full_name?.charAt(0)?.toUpperCase() || '?'}
+            </Text>
+          </View>
+
+          <View style={styles.info}>
+            <View style={styles.nameRow}>
+              <Text style={styles.studentName} numberOfLines={1}>
+                {item.full_name}
               </Text>
-            </View>
-          )
-        }
-        renderItem={({ item }) => {
-          const isExpired = checkIsExpired(item.plan_end_date);
-          const isActive = item.status === 'Active';
-          return (
-            <View style={[
-              styles.card, 
-              !isActive && styles.cardInactive, 
-              isExpired && isActive && styles.cardExpired
-            ]}>
-              <TouchableOpacity 
-                style={{ flex: 1 }} 
-                onPress={() => navigation.navigate('Planner', { student: item })}
-              >
-                <View style={styles.cardHeader}>
-                  <View style={{ flex: 1 }}>
-                    <Text style={[styles.studentName, isExpired && isActive && { color: '#fff' }]}>
-                      {item.full_name}
-                    </Text>
-                    <Text style={[styles.venceText, isExpired && isActive && { color: '#ffcccc' }]}>
-                      {isExpired && isActive 
-                        ? '⚠️ PLAN VENCIDO' 
-                        : `📅 Vence: ${item.plan_end_date 
-                            ? new Date(item.plan_end_date).toLocaleDateString() 
-                            : 'Sin plan'}`
-                      }
-                    </Text>
-                  </View>
-                  <View style={[styles.statusBadge, { backgroundColor: isActive ? '#ADFF2F20' : '#444' }]}>
-                    <Text style={[styles.statusText, { color: isActive ? '#ADFF2F' : '#999' }]}>
-                      {isActive ? 'ACTIVO' : 'INACTIVO'}
-                    </Text>
-                  </View>
-                </View>
-                <View style={styles.statsGrid}>
-                  <View style={styles.statBox}>
-                    <Text style={styles.statLabel}>PESO</Text>
-                    <Text style={styles.statValue}>{item.weight || '--'}kg</Text>
-                  </View>
-                  <View style={[styles.statBox, styles.statBorder]}>
-                    <Text style={styles.statLabel}>NIVEL</Text>
-                    <Text style={styles.statValue}>{item.level}</Text>
-                  </View>
-                  <View style={styles.statBox}>
-                    <Text style={styles.statLabel}>ALTURA</Text>
-                    <Text style={styles.statValue}>{item.height || '--'}cm</Text>
-                  </View>
-                </View>
-              </TouchableOpacity>
 
-              <View style={styles.cardActions}>
-                <TouchableOpacity style={styles.actionBtn} onPress={() => openEditModal(item)}>
-                  <Ionicons name="pencil" size={18} color="#FFD700" />
-                </TouchableOpacity>
-                <TouchableOpacity style={styles.actionBtn} onPress={() => toggleStatus(item.id, item.status)}>
-                  <Ionicons 
-                    name={isActive ? "person-remove-outline" : "person-add-outline"} 
-                    size={20} 
-                    color={isActive ? "#ff4444" : "#ADFF2F"} 
-                  />
-                </TouchableOpacity>
+              <View
+                style={[
+                  styles.statusBadge,
+                  {
+                    backgroundColor: statusConfig.bg,
+                    borderColor: statusConfig.border,
+                  },
+                ]}
+              >
+                <Text style={[styles.statusText, { color: statusConfig.color }]}>
+                  {statusConfig.label}
+                </Text>
               </View>
             </View>
-          );
-        }}
-      />
 
-      {/* MODAL */}
-      <Modal 
-        visible={modalVisible} 
-        animationType="slide" 
-        transparent={true} 
+            <Text style={styles.metaText} numberOfLines={1}>
+              {item.level || 'Sin nivel'} · {item.box_city || 'Sin ciudad'}
+            </Text>
+
+            <Text style={styles.metaText} numberOfLines={1}>
+              Coach: {item.coachName}
+            </Text>
+
+            <View style={styles.planBox}>
+              <Ionicons
+                name={planConfig.icon}
+                size={15}
+                color={planConfig.color}
+              />
+
+              <View style={{ flex: 1, marginLeft: 7 }}>
+                <Text style={[styles.planTitle, { color: planConfig.color }]}>
+                  {planConfig.label}
+                </Text>
+
+                {item.planStatus === 'no_plan' ? (
+                  <Text style={styles.planSub}>
+                    Sin fecha de inicio y término configurada
+                  </Text>
+                ) : (
+                  <Text style={styles.planSub}>
+                    {fmtDate(item.plan_start_date)} → {fmtDate(item.plan_end_date)}
+                  </Text>
+                )}
+              </View>
+            </View>
+
+            {item.planStatus !== 'no_plan' && (
+              <>
+                <View style={styles.progressTop}>
+                  <Text style={styles.wodText}>
+                    {item.loaded}/{item.expected} WODs cargados
+                  </Text>
+
+                  <Text style={styles.remainingText}>
+                    Restan {item.remaining}
+                  </Text>
+                </View>
+
+                <View style={styles.progressBg}>
+                  <View
+                    style={[
+                      styles.progressFill,
+                      { width: `${item.progress * 100}%` },
+                    ]}
+                  />
+                </View>
+              </>
+            )}
+          </View>
+        </TouchableOpacity>
+
+        <View style={styles.cardActions}>
+          <TouchableOpacity
+            style={styles.actionBtn}
+            onPress={() => openEditModal(item)}
+            activeOpacity={0.85}
+          >
+            <Ionicons name="pencil" size={18} color="#FFD700" />
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.actionBtn}
+            onPress={() => toggleStatus(item.id, item.status)}
+            activeOpacity={0.85}
+          >
+            <Ionicons
+              name={isActive ? 'person-remove-outline' : 'person-add-outline'}
+              size={20}
+              color={isActive ? '#ff4444' : '#00ff88'}
+            />
+          </TouchableOpacity>
+        </View>
+      </View>
+    );
+  };
+
+  if (loading && !refreshing) {
+    return (
+      <SafeAreaView style={styles.loadingContainer}>
+        <ActivityIndicator size="large" color="#FFD700" />
+
+        <Text style={styles.loadingText}>
+          Cargando atletas...
+        </Text>
+      </SafeAreaView>
+    );
+  }
+
+  return (
+    <SafeAreaView style={styles.container}>
+      <ScrollView
+        style={styles.list}
+        contentContainerStyle={styles.listContent}
+        showsVerticalScrollIndicator={true}
+        keyboardShouldPersistTaps="handled"
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={refreshList}
+            tintColor="#FFD700"
+          />
+        }
+      >
+        {renderHeader()}
+
+        {filteredStudents.length === 0 ? (
+          <View style={styles.emptyState}>
+            <Ionicons name="people-outline" size={48} color="#222" />
+
+            <Text style={styles.emptyText}>
+              {search ? 'Sin resultados' : 'No hay atletas registrados'}
+            </Text>
+          </View>
+        ) : (
+          filteredStudents.map((item) => (
+            <View key={item.id}>
+              {renderStudent({ item })}
+            </View>
+          ))
+        )}
+      </ScrollView>
+
+      <Modal
+        visible={modalVisible}
+        animationType="slide"
+        transparent
         onRequestClose={() => setModalVisible(false)}
       >
         <View style={styles.modalOverlay}>
-          <KeyboardAvoidingView 
-            behavior={Platform.OS === "ios" ? "padding" : "height"} 
-            style={{ flex: 1, justifyContent: 'flex-end' }}
+          <KeyboardAvoidingView
+            behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+            style={styles.keyboardContainer}
           >
             <View style={styles.modalContent}>
               <View style={styles.modalHandle} />
+
               <View style={styles.modalHeader}>
                 <Text style={styles.modalTitle}>
                   {isEditing ? 'Editar Atleta' : 'Nuevo Atleta'}
                 </Text>
+
                 <TouchableOpacity onPress={() => setModalVisible(false)}>
                   <Ionicons name="close-circle" size={32} color="#444" />
                 </TouchableOpacity>
               </View>
 
-              <ScrollView 
+              <ScrollView
                 showsVerticalScrollIndicator={false}
                 keyboardShouldPersistTaps="handled"
                 bounces={false}
               >
-                <Text style={styles.modalLabel}>DATOS DE ACCESO</Text>
-                <TextInput 
-                  placeholder="Nombre Completo" 
-                  placeholderTextColor="#444" 
-                  style={styles.modalInput} 
+                <Text style={styles.modalLabel}>DATOS PRINCIPALES</Text>
+
+                <TextInput
+                  placeholder="Nombre completo"
+                  placeholderTextColor="#444"
+                  style={styles.modalInput}
                   value={formData.name}
-                  onChangeText={(t) => setFormData({...formData, name: t})} 
+                  onChangeText={(text) =>
+                    setFormData({ ...formData, name: text })
+                  }
                 />
+
                 {!isEditing && (
                   <>
-                    <TextInput 
-                      placeholder="Email" 
-                      placeholderTextColor="#444" 
-                      autoCapitalize="none" 
+                    <TextInput
+                      placeholder="Email"
+                      placeholderTextColor="#444"
+                      autoCapitalize="none"
                       keyboardType="email-address"
-                      style={styles.modalInput} 
-                      onChangeText={(t) => setFormData({...formData, email: t})} 
+                      style={styles.modalInput}
+                      value={formData.email}
+                      onChangeText={(text) =>
+                        setFormData({ ...formData, email: text })
+                      }
                     />
-                    <TextInput 
-                      placeholder="Contraseña" 
-                      placeholderTextColor="#444" 
-                      secureTextEntry 
-                      style={styles.modalInput} 
-                      onChangeText={(t) => setFormData({...formData, password: t})} 
+
+                    <TextInput
+                      placeholder="Contraseña"
+                      placeholderTextColor="#444"
+                      secureTextEntry
+                      style={styles.modalInput}
+                      value={formData.password}
+                      onChangeText={(text) =>
+                        setFormData({ ...formData, password: text })
+                      }
                     />
                   </>
                 )}
 
                 <Text style={styles.modalLabel}>NIVEL TÉCNICO</Text>
+
                 <View style={styles.levelGrid}>
-                  {levels.map(l => (
-                    <TouchableOpacity 
-                      key={l.id} 
-                      style={[styles.levelItem, formData.level === l.id && styles.levelActive]} 
-                      onPress={() => setFormData({...formData, level: l.id})}
+                  {levels.map((level) => (
+                    <TouchableOpacity
+                      key={level.id}
+                      style={[
+                        styles.levelItem,
+                        formData.level === level.id && styles.levelActive,
+                      ]}
+                      onPress={() =>
+                        setFormData({ ...formData, level: level.id })
+                      }
+                      activeOpacity={0.85}
                     >
-                      <Ionicons name={l.icon} size={16} color={formData.level === l.id ? '#000' : '#666'} />
-                      <Text style={[styles.levelItemText, formData.level === l.id && { color: '#000' }]}>
-                        {l.label}
+                      <Ionicons
+                        name={level.icon}
+                        size={16}
+                        color={formData.level === level.id ? '#000' : '#666'}
+                      />
+
+                      <Text
+                        style={[
+                          styles.levelItemText,
+                          formData.level === level.id && { color: '#000' },
+                        ]}
+                      >
+                        {level.label}
                       </Text>
                     </TouchableOpacity>
                   ))}
                 </View>
 
                 <Text style={styles.modalLabel}>ASIGNAR COACH</Text>
+
                 <View style={styles.coachGrid}>
-                  {coaches.map(c => (
-                    <TouchableOpacity 
-                      key={c.id} 
-                      style={[styles.coachChip, formData.coach_id === c.id && styles.coachChipActive]} 
-                      onPress={() => setFormData({...formData, coach_id: c.id})}
+                  {coaches.map((coach) => (
+                    <TouchableOpacity
+                      key={coach.id}
+                      style={[
+                        styles.coachChip,
+                        formData.coach_id === coach.id && styles.coachChipActive,
+                      ]}
+                      onPress={() =>
+                        setFormData({ ...formData, coach_id: coach.id })
+                      }
+                      activeOpacity={0.85}
                     >
-                      <Text style={{ color: formData.coach_id === c.id ? '#000' : '#fff', fontSize: 12 }}>
-                        {c.full_name}
+                      <Text
+                        style={[
+                          styles.coachChipText,
+                          formData.coach_id === coach.id && { color: '#000' },
+                        ]}
+                      >
+                        {coach.full_name}
                       </Text>
                     </TouchableOpacity>
                   ))}
                 </View>
 
                 <Text style={styles.modalLabel}>OBJETIVOS / NOTAS</Text>
-                <TextInput 
-                  placeholder="Ej: Bajar de peso, mejorar Snatch..." 
-                  placeholderTextColor="#444" 
+
+                <TextInput
+                  placeholder="Ej: bajar de peso, mejorar Snatch..."
+                  placeholderTextColor="#444"
                   multiline
                   numberOfLines={3}
-                  style={[styles.modalInput, { height: 80, textAlignVertical: 'top' }]} 
+                  style={[styles.modalInput, styles.textArea]}
                   value={formData.goal}
-                  onChangeText={(t) => setFormData({...formData, goal: t})} 
+                  onChangeText={(text) =>
+                    setFormData({ ...formData, goal: text })
+                  }
                 />
 
-                <TouchableOpacity style={styles.saveBtn} onPress={handleSave} disabled={saving}>
-                  {saving 
-                    ? <ActivityIndicator color="#000" /> 
-                    : <Text style={styles.saveBtnText}>{isEditing ? 'ACTUALIZAR' : 'CREAR ATLETA'}</Text>
-                  }
+                <TouchableOpacity
+                  style={styles.saveBtn}
+                  onPress={handleSave}
+                  disabled={saving}
+                  activeOpacity={0.85}
+                >
+                  {saving ? (
+                    <ActivityIndicator color="#000" />
+                  ) : (
+                    <Text style={styles.saveBtnText}>
+                      {isEditing ? 'ACTUALIZAR ATLETA' : 'CREAR ATLETA'}
+                    </Text>
+                  )}
                 </TouchableOpacity>
 
-                {/* Espacio extra para que el botón no quede pegado al borde */}
                 <View style={{ height: 30 }} />
               </ScrollView>
             </View>
@@ -418,105 +961,419 @@ export default function StudentManagement({ route, navigation }) {
 }
 
 const styles = StyleSheet.create({
-  // ✅ flex:1 en container es esencial
-  container: { flex: 1, backgroundColor: '#000' },
-
-  header: { 
-    flexDirection: 'row', alignItems: 'center', 
-    marginBottom: 16, marginTop: 16, paddingHorizontal: 20 
-  },
-  backButton: { flexDirection: 'row', alignItems: 'center' },
-  title: { color: '#fff', fontSize: 24, fontWeight: 'bold' },
-  subtitle: { color: '#666', fontSize: 12, marginTop: 2 },
-  addButton: { 
-    backgroundColor: '#FFD700', width: 45, height: 45, 
-    borderRadius: 12, justifyContent: 'center', alignItems: 'center' 
+  container: {
+    flex: 1,
+    minHeight: '100%',
+    backgroundColor: '#000',
   },
 
-  searchContainer: { 
-    flexDirection: 'row', alignItems: 'center', backgroundColor: '#111', 
-    paddingHorizontal: 15, borderRadius: 12, marginBottom: 16, 
-    borderWidth: 1, borderColor: '#222', marginHorizontal: 20 
+  loadingContainer: {
+    flex: 1,
+    backgroundColor: '#000',
+    justifyContent: 'center',
+    alignItems: 'center',
   },
-  searchInput: { flex: 1, color: '#fff', paddingVertical: 12, marginLeft: 10 },
 
-  // ✅ FIX CLAVE: flex:1 en la lista para que ocupe el espacio disponible
-  list: { flex: 1 },
-  listContent: { paddingHorizontal: 20, paddingBottom: 40 },
+  loadingText: {
+    color: '#fff',
+    marginTop: 14,
+    fontWeight: '700',
+  },
 
-  emptyState: { alignItems: 'center', marginTop: 80, gap: 12 },
-  emptyText: { color: '#444', fontSize: 14 },
+  list: {
+    flex: 1,
+    minHeight: 0,
+  },
 
-  card: { 
-    backgroundColor: '#0a0a0a', padding: 18, borderRadius: 24, 
-    marginBottom: 12, borderWidth: 1, borderColor: '#1a1a1a', flexDirection: 'row' 
+  listContent: {
+    paddingHorizontal: 16,
+    paddingBottom: 180,
+    flexGrow: 1,
   },
-  cardInactive: { opacity: 0.4 },
-  cardExpired: { backgroundColor: '#3b0000', borderColor: '#ff4444' },
-  cardHeader: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 14 },
-  studentName: { color: '#fff', fontSize: 17, fontWeight: 'bold' },
-  venceText: { color: '#666', fontSize: 11, marginTop: 4, fontWeight: 'bold' },
-  statusBadge: { paddingHorizontal: 8, paddingVertical: 3, borderRadius: 6, alignSelf: 'flex-start' },
-  statusText: { fontSize: 9, fontWeight: 'bold' },
-  statsGrid: { 
-    flexDirection: 'row', backgroundColor: 'rgba(255,255,255,0.05)', 
-    borderRadius: 12, padding: 10 
-  },
-  statBox: { flex: 1, alignItems: 'center' },
-  statBorder: { 
-    borderLeftWidth: 1, borderRightWidth: 1, 
-    borderColor: 'rgba(255,255,255,0.1)' 
-  },
-  statLabel: { color: 'rgba(255,255,255,0.4)', fontSize: 8, fontWeight: 'bold' },
-  statValue: { color: '#fff', fontSize: 12, fontWeight: 'bold', marginTop: 2 },
-  cardActions: { 
-    marginLeft: 12, justifyContent: 'space-around', 
-    borderLeftWidth: 1, borderLeftColor: 'rgba(255,255,255,0.1)', paddingLeft: 10 
-  },
-  actionBtn: { padding: 8 },
 
-  modalOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.85)' },
-  modalContent: { 
-    backgroundColor: '#0a0a0a', 
-    borderTopLeftRadius: 30, borderTopRightRadius: 30, 
-    paddingHorizontal: 25, paddingTop: 12, paddingBottom: 0,
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingTop: 18,
+    marginBottom: 14,
+  },
+
+  backButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+
+  title: {
+    color: '#fff',
+    fontSize: 24,
+    fontWeight: '900',
+  },
+
+  subtitle: {
+    color: '#666',
+    fontSize: 12,
+    marginTop: 2,
+    fontWeight: '700',
+  },
+
+  addButton: {
+    backgroundColor: '#FFD700',
+    width: 45,
+    height: 45,
+    borderRadius: 14,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+
+  statsRow: {
+    flexDirection: 'row',
+    marginBottom: 12,
+    gap: 8,
+  },
+
+  statCard: {
+    flex: 1,
+    backgroundColor: '#0A0A0A',
+    borderWidth: 1,
+    borderColor: '#1A1A1A',
+    borderRadius: 14,
+    paddingVertical: 10,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+
+  statCardActive: {
+    backgroundColor: '#111',
+  },
+
+  statValue: {
+    fontSize: 18,
+    fontWeight: '900',
+  },
+
+  statLabel: {
+    color: '#777',
+    fontSize: 8,
+    fontWeight: '900',
+    textTransform: 'uppercase',
+    marginTop: 3,
+    textAlign: 'center',
+  },
+
+  searchContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#0A0A0A',
+    paddingHorizontal: 15,
+    borderRadius: 14,
+    marginBottom: 14,
+    borderWidth: 1,
+    borderColor: '#1A1A1A',
+  },
+
+  searchInput: {
+    flex: 1,
+    color: '#fff',
+    paddingVertical: 12,
+    marginLeft: 10,
+    fontWeight: '700',
+  },
+
+  emptyState: {
+    alignItems: 'center',
+    marginTop: 80,
+    gap: 12,
+  },
+
+  emptyText: {
+    color: '#444',
+    fontSize: 14,
+    fontWeight: '700',
+  },
+
+  card: {
+    backgroundColor: '#0A0A0A',
+    borderRadius: 18,
+    marginBottom: 10,
+    borderWidth: 1,
+    borderColor: '#1A1A1A',
+    flexDirection: 'row',
+    overflow: 'hidden',
+  },
+
+  cardInactive: {
+    opacity: 0.45,
+  },
+
+  cardExpired: {
+    borderColor: '#FF444455',
+    backgroundColor: '#140404',
+  },
+
+  cardMain: {
+    flex: 1,
+    flexDirection: 'row',
+    padding: 13,
+  },
+
+  avatar: {
+    width: 48,
+    height: 48,
+    borderRadius: 15,
+    backgroundColor: '#FFD700',
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: 12,
+  },
+
+  avatarText: {
+    color: '#000',
+    fontWeight: '900',
+    fontSize: 18,
+  },
+
+  info: {
+    flex: 1,
+  },
+
+  nameRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+
+  studentName: {
+    color: '#fff',
+    fontSize: 15,
+    fontWeight: '900',
+    flex: 1,
+    marginRight: 8,
+  },
+
+  statusBadge: {
+    borderWidth: 1,
+    borderRadius: 999,
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+  },
+
+  statusText: {
+    fontSize: 9,
+    fontWeight: '900',
+    textTransform: 'uppercase',
+  },
+
+  metaText: {
+    color: '#777',
+    fontSize: 11,
+    marginTop: 3,
+    fontWeight: '700',
+  },
+
+  planBox: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#050505',
+    borderWidth: 1,
+    borderColor: '#171717',
+    borderRadius: 12,
+    padding: 9,
+    marginTop: 9,
+  },
+
+  planTitle: {
+    fontSize: 11,
+    fontWeight: '900',
+    textTransform: 'uppercase',
+  },
+
+  planSub: {
+    color: '#777',
+    fontSize: 10,
+    fontWeight: '700',
+    marginTop: 2,
+  },
+
+  progressTop: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginTop: 9,
+  },
+
+  wodText: {
+    color: '#fff',
+    fontSize: 11,
+    fontWeight: '900',
+  },
+
+  remainingText: {
+    color: '#FFD700',
+    fontSize: 11,
+    fontWeight: '900',
+  },
+
+  progressBg: {
+    height: 4,
+    backgroundColor: '#1A1A1A',
+    borderRadius: 4,
+    marginTop: 6,
+    overflow: 'hidden',
+  },
+
+  progressFill: {
+    height: 4,
+    backgroundColor: '#FFD700',
+    borderRadius: 4,
+  },
+
+  cardActions: {
+    width: 50,
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderLeftWidth: 1,
+    borderLeftColor: '#171717',
+  },
+
+  actionBtn: {
+    padding: 10,
+  },
+
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.85)',
+  },
+
+  keyboardContainer: {
+    flex: 1,
+    justifyContent: 'flex-end',
+  },
+
+  modalContent: {
+    backgroundColor: '#0A0A0A',
+    borderTopLeftRadius: 30,
+    borderTopRightRadius: 30,
+    paddingHorizontal: 25,
+    paddingTop: 12,
+    paddingBottom: 0,
     maxHeight: '92%',
-    borderTopWidth: 2, borderTopColor: '#FFD700' 
+    borderTopWidth: 2,
+    borderTopColor: '#FFD700',
   },
-  modalHandle: { 
-    width: 36, height: 4, backgroundColor: '#333', 
-    borderRadius: 2, alignSelf: 'center', marginBottom: 16 
+
+  modalHandle: {
+    width: 36,
+    height: 4,
+    backgroundColor: '#333',
+    borderRadius: 2,
+    alignSelf: 'center',
+    marginBottom: 16,
   },
-  modalHeader: { 
-    flexDirection: 'row', justifyContent: 'space-between', 
-    alignItems: 'center', marginBottom: 8 
+
+  modalHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 8,
   },
-  modalTitle: { color: '#fff', fontSize: 22, fontWeight: 'bold' },
-  modalLabel: { 
-    color: '#FFD700', fontSize: 10, fontWeight: 'bold', 
-    letterSpacing: 1, marginTop: 20, marginBottom: 10 
+
+  modalTitle: {
+    color: '#fff',
+    fontSize: 22,
+    fontWeight: '900',
   },
-  modalInput: { 
-    backgroundColor: '#111', color: '#fff', padding: 15, 
-    borderRadius: 12, marginBottom: 10, borderWidth: 1, borderColor: '#222' 
+
+  modalLabel: {
+    color: '#FFD700',
+    fontSize: 10,
+    fontWeight: '900',
+    letterSpacing: 1,
+    marginTop: 20,
+    marginBottom: 10,
   },
-  levelGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8 },
-  levelItem: { 
-    flex: 1, minWidth: '45%', flexDirection: 'row', alignItems: 'center', 
-    backgroundColor: '#111', padding: 12, borderRadius: 10, 
-    borderWidth: 1, borderColor: '#222' 
+
+  modalInput: {
+    backgroundColor: '#111',
+    color: '#fff',
+    padding: 15,
+    borderRadius: 12,
+    marginBottom: 10,
+    borderWidth: 1,
+    borderColor: '#222',
   },
-  levelActive: { backgroundColor: '#FFD700', borderColor: '#FFD700' },
-  levelItemText: { color: '#666', marginLeft: 8, fontSize: 11, fontWeight: 'bold' },
-  coachGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginBottom: 4 },
-  coachChip: { 
-    paddingHorizontal: 12, paddingVertical: 8, borderRadius: 15, 
-    backgroundColor: '#111', borderWidth: 1, borderColor: '#333' 
+
+  textArea: {
+    height: 80,
+    textAlignVertical: 'top',
   },
-  coachChipActive: { backgroundColor: '#FFD700', borderColor: '#FFD700' },
-  saveBtn: { 
-    backgroundColor: '#FFD700', padding: 18, borderRadius: 15, 
-    alignItems: 'center', marginTop: 24 
+
+  levelGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
   },
-  saveBtnText: { color: '#000', fontWeight: 'bold', textTransform: 'uppercase', fontSize: 14 }
+
+  levelItem: {
+    flex: 1,
+    minWidth: '45%',
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#111',
+    padding: 12,
+    borderRadius: 10,
+    borderWidth: 1,
+    borderColor: '#222',
+  },
+
+  levelActive: {
+    backgroundColor: '#FFD700',
+    borderColor: '#FFD700',
+  },
+
+  levelItemText: {
+    color: '#666',
+    marginLeft: 8,
+    fontSize: 11,
+    fontWeight: '900',
+  },
+
+  coachGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginBottom: 4,
+  },
+
+  coachChip: {
+    paddingHorizontal: 12,
+    paddingVertical: 8,
+    borderRadius: 15,
+    backgroundColor: '#111',
+    borderWidth: 1,
+    borderColor: '#333',
+  },
+
+  coachChipActive: {
+    backgroundColor: '#FFD700',
+    borderColor: '#FFD700',
+  },
+
+  coachChipText: {
+    color: '#fff',
+    fontSize: 12,
+    fontWeight: '800',
+  },
+
+  saveBtn: {
+    backgroundColor: '#FFD700',
+    padding: 18,
+    borderRadius: 15,
+    alignItems: 'center',
+    marginTop: 24,
+  },
+
+  saveBtnText: {
+    color: '#000',
+    fontWeight: '900',
+    textTransform: 'uppercase',
+    fontSize: 14,
+  },
 });
