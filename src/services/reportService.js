@@ -23,7 +23,24 @@ export async function generateStudentReport({
       }
     );
 
-    if (error) throw error;
+    if (error) {
+      let backendMessage = error.message || 'Error ejecutando Edge Function.';
+
+      if (error.context) {
+        try {
+          const errorBody = await error.context.json();
+
+          backendMessage =
+            errorBody?.error ||
+            errorBody?.message ||
+            backendMessage;
+        } catch {
+          // Si no puede leer el JSON, mantiene el mensaje original.
+        }
+      }
+
+      throw new Error(backendMessage);
+    }
 
     if (!data?.success) {
       throw new Error(data?.error || 'No se pudo generar el reporte.');

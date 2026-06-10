@@ -13,20 +13,21 @@ import {
   KeyboardAvoidingView,
   Platform,
   SafeAreaView,
+  Linking,
 } from 'react-native';
-import { supabase } from '../../config/supabaseClient';
+import {
+  supabase,
+  SUPABASE_URL,
+  SUPABASE_ANON_KEY,
+} from '../../config/supabaseClient';
 import { createClient } from '@supabase/supabase-js';
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
+import { generateStudentReport } from '../../services/reportService';
 
-/*
-  Cliente aislado para crear usuarios sin cambiar la sesión del admin.
-  Si tu supabaseClient no expone supabaseUrl/supabaseKey,
-  el alta mostrará alerta.
-*/
 const isolatedAuthClient =
-  supabase?.supabaseUrl && supabase?.supabaseKey
-    ? createClient(supabase.supabaseUrl, supabase.supabaseKey, {
+  SUPABASE_URL && SUPABASE_ANON_KEY
+    ? createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
         auth: {
           persistSession: false,
           autoRefreshToken: false,
@@ -160,6 +161,7 @@ export default function StudentManagement({ route, navigation }) {
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [generatingReportId, setGeneratingReportId] = useState(null);
 
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
@@ -182,6 +184,15 @@ export default function StudentManagement({ route, navigation }) {
       fetchInitialData();
     }, [filterCoachId])
   );
+
+  const showMessage = (title, message) => {
+    if (Platform.OS === 'web' && typeof window !== 'undefined') {
+      window.alert(`${title}\n\n${message}`);
+      return;
+    }
+
+    Alert.alert(title, message);
+  };
 
   const fetchInitialData = async () => {
     try {
@@ -207,7 +218,7 @@ export default function StudentManagement({ route, navigation }) {
       applyFilters(studentsWithData, search, statusFilter);
     } catch (error) {
       console.error('Error cargando atletas:', error.message || error);
-      Alert.alert('Error', 'No se pudieron cargar los atletas.');
+      showMessage('Error', 'No se pudieron cargar los atletas.');
     } finally {
       setLoading(false);
       setRefreshing(false);
@@ -414,7 +425,53 @@ export default function StudentManagement({ route, navigation }) {
       await fetchInitialData();
     } catch (error) {
       console.error('Error cambiando estado:', error.message || error);
-      Alert.alert('Error', 'No se pudo cambiar el estado del atleta.');
+      showMessage('Error', 'No se pudo cambiar el estado del atleta.');
+    }
+  };
+
+  const handleGenerateReport = async (student) => {
+    if (!student?.id) {
+      showMessage('Error', 'No se encontró el ID del alumno.');
+      return;
+    }
+
+    if (student.planStatus === 'no_plan') {
+      showMessage(
+        'Sin período',
+        'Este atleta no tiene período configurado. Primero debes asignarle fecha de inicio y término.'
+      );
+      return;
+    }
+
+    try {
+      setGeneratingReportId(student.id);
+
+      const result = await generateStudentReport({
+        studentId: student.id,
+        periodStart: student.plan_start_date || null,
+        periodEnd: student.plan_end_date || null,
+        sendToEmail: student.email || null,
+      });
+
+      showMessage(
+        'Reporte generado',
+        `Se generó correctamente el Excel:\n\n${result.file_name}`
+      );
+
+      if (result?.file_url) {
+        await Linking.openURL(result.file_url);
+      }
+
+      await fetchInitialData();
+    } catch (error) {
+      console.error('Error generando reporte:', error.message || error);
+
+      showMessage(
+        'Error generando reporte',
+        error.message || 'No se pudo generar el reporte Excel.'
+      );
+    } finally {
+      setGeneratingReportId(null);
     }
   };
 
@@ -422,7 +479,7 @@ export default function StudentManagement({ route, navigation }) {
     const { name, email, password, level, goal, coach_id } = formData;
 
     if (!name.trim() || !coach_id) {
-      Alert.alert(
+      showMessage(
         'Campos incompletos',
         'Debes ingresar nombre y seleccionar un coach.'
       );
@@ -430,7 +487,7 @@ export default function StudentManagement({ route, navigation }) {
     }
 
     if (!isEditing && (!email.trim() || !password.trim())) {
-      Alert.alert(
+      showMessage(
         'Campos incompletos',
         'Debes ingresar email y contraseña para crear un atleta.'
       );
@@ -453,10 +510,10 @@ export default function StudentManagement({ route, navigation }) {
 
         if (error) throw error;
 
-        Alert.alert('Éxito', 'Atleta actualizado correctamente.');
+        showMessage('Éxito', 'Atleta actualizado correctamente.');
       } else {
         if (!isolatedAuthClient) {
-          Alert.alert(
+          showMessage(
             'Falta configuración',
             'No se pudo crear el cliente aislado para registrar usuarios. Revisa supabaseClient.'
           );
@@ -491,14 +548,14 @@ export default function StudentManagement({ route, navigation }) {
 
         if (profileError) throw profileError;
 
-        Alert.alert('Éxito', 'Nuevo atleta registrado correctamente.');
+        showMessage('Éxito', 'Nuevo atleta registrado correctamente.');
       }
 
       setModalVisible(false);
       await fetchInitialData();
     } catch (error) {
       console.error('Error guardando atleta:', error.message || error);
-      Alert.alert('Error', error.message || 'No se pudo guardar el atleta.');
+      showMessage('Error', error.message || 'No se pudo guardar el atleta.');
     } finally {
       setSaving(false);
     }
@@ -624,6 +681,7 @@ export default function StudentManagement({ route, navigation }) {
     const isActive = item.status === 'Active';
     const statusConfig = getStatusConfig(item.status);
     const planConfig = getPlanConfig(item.planStatus);
+    const isGeneratingReport = generatingReportId === item.id;
 
     return (
       <View
@@ -633,94 +691,118 @@ export default function StudentManagement({ route, navigation }) {
           item.planStatus === 'expired' && isActive && styles.cardExpired,
         ]}
       >
-        <TouchableOpacity
-          style={styles.cardMain}
-          onPress={() => navigation.navigate('Planner', { student: item })}
-          activeOpacity={0.85}
-        >
-          <View style={styles.avatar}>
-            <Text style={styles.avatarText}>
-              {item.full_name?.charAt(0)?.toUpperCase() || '?'}
-            </Text>
-          </View>
+        <View style={styles.cardBody}>
+          <TouchableOpacity
+            style={styles.cardMain}
+            onPress={() => navigation.navigate('Planner', { student: item })}
+            activeOpacity={0.85}
+          >
+            <View style={styles.avatar}>
+              <Text style={styles.avatarText}>
+                {item.full_name?.charAt(0)?.toUpperCase() || '?'}
+              </Text>
+            </View>
 
-          <View style={styles.info}>
-            <View style={styles.nameRow}>
-              <Text style={styles.studentName} numberOfLines={1}>
-                {item.full_name}
+            <View style={styles.info}>
+              <View style={styles.nameRow}>
+                <Text style={styles.studentName} numberOfLines={1}>
+                  {item.full_name}
+                </Text>
+
+                <View
+                  style={[
+                    styles.statusBadge,
+                    {
+                      backgroundColor: statusConfig.bg,
+                      borderColor: statusConfig.border,
+                    },
+                  ]}
+                >
+                  <Text style={[styles.statusText, { color: statusConfig.color }]}>
+                    {statusConfig.label}
+                  </Text>
+                </View>
+              </View>
+
+              <Text style={styles.metaText} numberOfLines={1}>
+                {item.level || 'Sin nivel'} · {item.box_city || 'Sin ciudad'}
               </Text>
 
-              <View
-                style={[
-                  styles.statusBadge,
-                  {
-                    backgroundColor: statusConfig.bg,
-                    borderColor: statusConfig.border,
-                  },
-                ]}
-              >
-                <Text style={[styles.statusText, { color: statusConfig.color }]}>
-                  {statusConfig.label}
-                </Text>
-              </View>
-            </View>
+              <Text style={styles.metaText} numberOfLines={1}>
+                Coach: {item.coachName}
+              </Text>
 
-            <Text style={styles.metaText} numberOfLines={1}>
-              {item.level || 'Sin nivel'} · {item.box_city || 'Sin ciudad'}
-            </Text>
+              <View style={styles.planBox}>
+                <Ionicons
+                  name={planConfig.icon}
+                  size={15}
+                  color={planConfig.color}
+                />
 
-            <Text style={styles.metaText} numberOfLines={1}>
-              Coach: {item.coachName}
-            </Text>
-
-            <View style={styles.planBox}>
-              <Ionicons
-                name={planConfig.icon}
-                size={15}
-                color={planConfig.color}
-              />
-
-              <View style={{ flex: 1, marginLeft: 7 }}>
-                <Text style={[styles.planTitle, { color: planConfig.color }]}>
-                  {planConfig.label}
-                </Text>
-
-                {item.planStatus === 'no_plan' ? (
-                  <Text style={styles.planSub}>
-                    Sin fecha de inicio y término configurada
+                <View style={{ flex: 1, marginLeft: 7 }}>
+                  <Text style={[styles.planTitle, { color: planConfig.color }]}>
+                    {planConfig.label}
                   </Text>
-                ) : (
-                  <Text style={styles.planSub}>
-                    {fmtDate(item.plan_start_date)} → {fmtDate(item.plan_end_date)}
-                  </Text>
-                )}
-              </View>
-            </View>
 
-            {item.planStatus !== 'no_plan' && (
+                  {item.planStatus === 'no_plan' ? (
+                    <Text style={styles.planSub}>
+                      Sin fecha de inicio y término configurada
+                    </Text>
+                  ) : (
+                    <Text style={styles.planSub}>
+                      {fmtDate(item.plan_start_date)} → {fmtDate(item.plan_end_date)}
+                    </Text>
+                  )}
+                </View>
+              </View>
+
+              {item.planStatus !== 'no_plan' && (
+                <>
+                  <View style={styles.progressTop}>
+                    <Text style={styles.wodText}>
+                      {item.loaded}/{item.expected} WODs cargados
+                    </Text>
+
+                    <Text style={styles.remainingText}>
+                      Restan {item.remaining}
+                    </Text>
+                  </View>
+
+                  <View style={styles.progressBg}>
+                    <View
+                      style={[
+                        styles.progressFill,
+                        { width: `${item.progress * 100}%` },
+                      ]}
+                    />
+                  </View>
+                </>
+              )}
+            </View>
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            style={[
+              styles.reportButton,
+              item.planStatus === 'no_plan' && styles.reportButtonDisabled,
+            ]}
+            onPress={() => handleGenerateReport(item)}
+            disabled={isGeneratingReport}
+            activeOpacity={0.85}
+          >
+            {isGeneratingReport ? (
+              <ActivityIndicator size="small" color="#000" />
+            ) : (
               <>
-                <View style={styles.progressTop}>
-                  <Text style={styles.wodText}>
-                    {item.loaded}/{item.expected} WODs cargados
-                  </Text>
+                <Ionicons name="document-attach-outline" size={15} color="#000" />
 
-                  <Text style={styles.remainingText}>
-                    Restan {item.remaining}
-                  </Text>
-                </View>
-
-                <View style={styles.progressBg}>
-                  <View
-                    style={[
-                      styles.progressFill,
-                      { width: `${item.progress * 100}%` },
-                    ]}
-                  />
-                </View>
+                <Text style={styles.reportButtonText}>
+                  Generar Excel
+                </Text>
               </>
             )}
-          </View>
-        </TouchableOpacity>
+          </TouchableOpacity>
+        </View>
 
         <View style={styles.cardActions}>
           <TouchableOpacity
@@ -1110,8 +1192,11 @@ const styles = StyleSheet.create({
     backgroundColor: '#140404',
   },
 
-  cardMain: {
+  cardBody: {
     flex: 1,
+  },
+
+  cardMain: {
     flexDirection: 'row',
     padding: 13,
   },
@@ -1223,6 +1308,30 @@ const styles = StyleSheet.create({
     height: 4,
     backgroundColor: '#FFD700',
     borderRadius: 4,
+  },
+
+  reportButton: {
+    marginHorizontal: 13,
+    marginBottom: 13,
+    backgroundColor: '#FFD700',
+    borderRadius: 12,
+    paddingVertical: 11,
+    paddingHorizontal: 14,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+
+  reportButtonDisabled: {
+    opacity: 0.55,
+  },
+
+  reportButtonText: {
+    color: '#000',
+    fontSize: 11,
+    fontWeight: '900',
+    textTransform: 'uppercase',
+    marginLeft: 6,
   },
 
   cardActions: {

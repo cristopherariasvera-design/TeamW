@@ -34,6 +34,20 @@ const DAY_NAMES = [
   'Sábado',
 ];
 
+type MonthInfo = {
+  year: number;
+  monthIndex: number;
+  label: string;
+};
+
+type PlanItem = {
+  id: string;
+  title: string | null;
+  date: string;
+  sections: unknown;
+  is_done: boolean | null;
+};
+
 function cleanFileName(value: string) {
   return value
     .normalize('NFD')
@@ -44,6 +58,7 @@ function cleanFileName(value: string) {
 
 function formatDate(dateString: string) {
   const date = new Date(`${dateString}T00:00:00`);
+
   return `${String(date.getDate()).padStart(2, '0')}-${String(
     date.getMonth() + 1
   ).padStart(2, '0')}-${date.getFullYear()}`;
@@ -53,11 +68,11 @@ function getMonthLabel(year: number, monthIndex: number) {
   return `${MONTH_NAMES[monthIndex]} ${year}`;
 }
 
-function getMonthsBetween(startDate: string, endDate: string) {
+function getMonthsBetween(startDate: string, endDate: string): MonthInfo[] {
   const start = new Date(`${startDate}T00:00:00`);
   const end = new Date(`${endDate}T00:00:00`);
 
-  const months = [];
+  const months: MonthInfo[] = [];
   const cursor = new Date(start.getFullYear(), start.getMonth(), 1);
 
   while (cursor <= end) {
@@ -78,7 +93,7 @@ function getWeekOfMonth(dateString: string) {
   return Math.floor((date.getDate() - 1) / 7) + 1;
 }
 
-function extractBlocks(sections: any) {
+function extractBlocks(sections: unknown) {
   if (!sections) return '';
 
   try {
@@ -88,7 +103,20 @@ function extractBlocks(sections: any) {
       return sections
         .map((section) => {
           if (typeof section === 'string') return section;
-          return section.title || section.name || section.type || JSON.stringify(section);
+
+          if (section && typeof section === 'object' && 'title' in section) {
+            return String(section.title || '');
+          }
+
+          if (section && typeof section === 'object' && 'name' in section) {
+            return String(section.name || '');
+          }
+
+          if (section && typeof section === 'object' && 'type' in section) {
+            return String(section.type || '');
+          }
+
+          return JSON.stringify(section);
         })
         .join(' | ');
     }
@@ -113,12 +141,7 @@ serve(async (req: Request): Promise<Response> => {
   try {
     const body = await req.json();
 
-    const {
-      student_id,
-      period_start,
-      period_end,
-      send_to_email,
-    } = body;
+    const { student_id, period_start, period_end, send_to_email } = body;
 
     if (!student_id) {
       throw new Error('Falta student_id.');
@@ -128,10 +151,49 @@ serve(async (req: Request): Promise<Response> => {
     const serviceRoleKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY');
 
     if (!supabaseUrl || !serviceRoleKey) {
-      throw new Error('Faltan variables SUPABASE_URL o SUPABASE_SERVICE_ROLE_KEY.');
+      throw new Error(
+        'Faltan variables SUPABASE_URL o SUPABASE_SERVICE_ROLE_KEY.'
+      );
     }
 
     const supabase = createClient(supabaseUrl, serviceRoleKey);
+
+    const authHeader = req.headers.get('Authorization');
+
+    if (!authHeader) {
+      throw new Error('No autorizado. Debes iniciar sesión.');
+    }
+
+    const token = authHeader.replace('Bearer ', '');
+
+    const {
+      data: { user },
+      error: userError,
+    } = await supabase.auth.getUser(token);
+
+    if (userError || !user) {
+      throw new Error('Sesión inválida o expirada.');
+    }
+
+    const { data: currentProfile, error: currentProfileError } =
+      await supabase
+        .from('profiles')
+        .select('id, role, full_name, email')
+        .eq('id', user.id)
+        .single();
+
+    if (currentProfileError) throw currentProfileError;
+
+    if (!currentProfile) {
+      throw new Error('No se encontró el perfil del usuario actual.');
+    }
+
+    const isAdmin = currentProfile.role === 'admin';
+    const isCoach = currentProfile.role === 'coach';
+
+    if (!isAdmin && !isCoach) {
+      throw new Error('No tienes permisos para generar reportes.');
+    }
 
     const { data: student, error: studentError } = await supabase
       .from('profiles')
@@ -140,12 +202,20 @@ serve(async (req: Request): Promise<Response> => {
       .single();
 
     if (studentError) throw studentError;
-    if (!student) throw new Error('Alumno no encontrado.');
+
+    if (!student) {
+      throw new Error('Alumno no encontrado.');
+    }
+
+    if (isCoach && student.coach_id !== currentProfile.id) {
+      throw new Error(
+        'Solo puedes generar reportes de tus alumnos asignados.'
+      );
+    }
 
     let finalPeriodStart = period_start;
     let finalPeriodEnd = period_end;
     let sessionsPerWeek = 3;
-    let periodId = null;
 
     if (!finalPeriodStart || !finalPeriodEnd) {
       const { data: period, error: periodError } = await supabase
@@ -162,10 +232,13 @@ serve(async (req: Request): Promise<Response> => {
         throw new Error('El alumno no tiene período registrado.');
       }
 
-      periodId = period.id;
       finalPeriodStart = period.start_date;
       finalPeriodEnd = period.end_date;
       sessionsPerWeek = period.sessions_per_week || 3;
+    }
+
+    if (!finalPeriodStart || !finalPeriodEnd) {
+      throw new Error('El período no tiene fecha de inicio o término.');
     }
 
     const { data: coach } = student.coach_id
@@ -178,13 +251,15 @@ serve(async (req: Request): Promise<Response> => {
 
     const { data: plans, error: plansError } = await supabase
       .from('plans')
-      .select('id, title, date, sections, is_done, created_at')
+      .select('id, title, date, sections, is_done')
       .eq('student_id', student_id)
       .gte('date', finalPeriodStart)
       .lte('date', finalPeriodEnd)
       .order('date', { ascending: true });
 
     if (plansError) throw plansError;
+
+    const planRows = (plans || []) as PlanItem[];
 
     const months = getMonthsBetween(finalPeriodStart, finalPeriodEnd);
 
@@ -197,8 +272,8 @@ serve(async (req: Request): Promise<Response> => {
     );
 
     const expectedTotal = totalExpectedWeeks * sessionsPerWeek;
-    const loadedTotal = plans?.length || 0;
-    const completedTotal = plans?.filter((plan) => plan.is_done).length || 0;
+    const loadedTotal = planRows.length;
+    const completedTotal = planRows.filter((plan) => plan.is_done).length;
 
     const resumenRows = [
       ['TEAMW - REPORTE DE PLANIFICACIÓN'],
@@ -207,7 +282,10 @@ serve(async (req: Request): Promise<Response> => {
       ['Correo alumno', student.email || 'Sin correo'],
       ['Coach', coach?.full_name || 'Sin coach asignado'],
       ['Correo coach', coach?.email || ''],
-      ['Período', `${formatDate(finalPeriodStart)} al ${formatDate(finalPeriodEnd)}`],
+      [
+        'Período',
+        `${formatDate(finalPeriodStart)} al ${formatDate(finalPeriodEnd)}`,
+      ],
       ['Sesiones por semana', sessionsPerWeek],
       ['WODs esperados', expectedTotal],
       ['WODs cargados', loadedTotal],
@@ -220,6 +298,9 @@ serve(async (req: Request): Promise<Response> => {
           : '0%',
       ],
       [],
+      ['Generado por', currentProfile.full_name || currentProfile.email || ''],
+      ['Rol', currentProfile.role],
+      [],
       ['Meses incluidos'],
       ...months.map((month) => [month.label]),
     ];
@@ -228,16 +309,16 @@ serve(async (req: Request): Promise<Response> => {
     XLSX.utils.book_append_sheet(workbook, resumenSheet, 'Resumen');
 
     months.forEach((month) => {
-      const monthPlans =
-        plans?.filter((plan) => {
-          const planDate = new Date(`${plan.date}T00:00:00`);
-          return (
-            planDate.getFullYear() === month.year &&
-            planDate.getMonth() === month.monthIndex
-          );
-        }) || [];
+      const monthPlans = planRows.filter((plan) => {
+        const planDate = new Date(`${plan.date}T00:00:00`);
 
-      const rows: any[][] = [
+        return (
+          planDate.getFullYear() === month.year &&
+          planDate.getMonth() === month.monthIndex
+        );
+      });
+
+      const rows: unknown[][] = [
         [`${month.label.toUpperCase()} - ${student.full_name || 'Alumno'}`],
         [],
         [
@@ -356,19 +437,37 @@ serve(async (req: Request): Promise<Response> => {
         },
       }
     );
-    } catch (error: unknown) {
+  } catch (error: unknown) {
     console.error('generate-student-report error:', error);
 
-    const message =
-        error instanceof Error
-        ? error.message
-        : 'Error generando reporte.';
+    let message = 'Error generando reporte.';
+
+    if (error instanceof Error) {
+      message = error.message;
+    } else if (typeof error === 'string') {
+      message = error;
+    } else if (error && typeof error === 'object') {
+      const errorObject = error as {
+        message?: string;
+        error?: string;
+        details?: string;
+        hint?: string;
+        code?: string;
+      };
+
+      message =
+        errorObject.message ||
+        errorObject.error ||
+        errorObject.details ||
+        errorObject.hint ||
+        JSON.stringify(errorObject);
+    }
 
     return new Response(
-        JSON.stringify({
+      JSON.stringify({
         success: false,
         error: message,
-        }),
+      }),
       {
         status: 400,
         headers: {
