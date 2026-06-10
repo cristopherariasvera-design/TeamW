@@ -93,6 +93,16 @@ function getWeekOfMonth(dateString: string) {
   return Math.floor((date.getDate() - 1) / 7) + 1;
 }
 
+function getWeeksBetween(startDate: string, endDate: string) {
+  const start = new Date(`${startDate}T00:00:00`);
+  const end = new Date(`${endDate}T00:00:00`);
+
+  const diffMs = end.getTime() - start.getTime();
+  const diffDays = Math.floor(diffMs / (1000 * 60 * 60 * 24)) + 1;
+
+  return Math.max(1, Math.ceil(diffDays / 7));
+}
+
 function extractBlocks(sections: unknown) {
   if (!sections) return '';
 
@@ -197,7 +207,14 @@ serve(async (req: Request): Promise<Response> => {
 
     const { data: student, error: studentError } = await supabase
       .from('profiles')
-      .select('id, full_name, email, coach_id')
+      .select(`
+        id,
+        full_name,
+        email,
+        coach_id,
+        sessions_per_week,
+        plan_weeks
+      `)
       .eq('id', student_id)
       .single();
 
@@ -215,7 +232,8 @@ serve(async (req: Request): Promise<Response> => {
 
     let finalPeriodStart = period_start;
     let finalPeriodEnd = period_end;
-    let sessionsPerWeek = 3;
+    let sessionsPerWeek = Number(student.sessions_per_week || 0) || 3;
+    let configuredWeeks = Number(student.plan_weeks || 0) || 0;
 
     if (!finalPeriodStart || !finalPeriodEnd) {
       const { data: period, error: periodError } = await supabase
@@ -234,7 +252,14 @@ serve(async (req: Request): Promise<Response> => {
 
       finalPeriodStart = period.start_date;
       finalPeriodEnd = period.end_date;
-      sessionsPerWeek = period.sessions_per_week || 3;
+      sessionsPerWeek =
+        Number(period.sessions_per_week || 0) ||
+        Number(student.sessions_per_week || 0) ||
+        3;
+      configuredWeeks =
+        Number(period.plan_weeks || period.weeks || 0) ||
+        Number(student.plan_weeks || 0) ||
+        0;
     }
 
     if (!finalPeriodStart || !finalPeriodEnd) {
@@ -265,11 +290,8 @@ serve(async (req: Request): Promise<Response> => {
 
     const workbook = XLSX.utils.book_new();
 
-    const totalExpectedWeeks = Math.ceil(
-      (new Date(`${finalPeriodEnd}T00:00:00`).getTime() -
-        new Date(`${finalPeriodStart}T00:00:00`).getTime()) /
-        (1000 * 60 * 60 * 24 * 7)
-    );
+    const totalExpectedWeeks =
+      configuredWeeks || getWeeksBetween(finalPeriodStart, finalPeriodEnd);
 
     const expectedTotal = totalExpectedWeeks * sessionsPerWeek;
     const loadedTotal = planRows.length;
@@ -287,6 +309,7 @@ serve(async (req: Request): Promise<Response> => {
         `${formatDate(finalPeriodStart)} al ${formatDate(finalPeriodEnd)}`,
       ],
       ['Sesiones por semana', sessionsPerWeek],
+      ['Semanas del período', totalExpectedWeeks],
       ['WODs esperados', expectedTotal],
       ['WODs cargados', loadedTotal],
       ['WODs completados', completedTotal],
@@ -405,20 +428,26 @@ serve(async (req: Request): Promise<Response> => {
 
     const { error: reportError } = await supabase
       .from('student_reports')
-      .insert({
-        student_id: student.id,
-        coach_id: student.coach_id || null,
-        period_start: finalPeriodStart,
-        period_end: finalPeriodEnd,
-        months: months.map((month) => month.label),
-        file_name: fileName,
-        storage_bucket: 'teamw-reports',
-        storage_path: storagePath,
-        file_url: fileUrl,
-        sent_to_email: send_to_email || student.email || null,
-        sent_at: null,
-        status: 'generated',
-      });
+      .upsert(
+        {
+          student_id: student.id,
+          coach_id: student.coach_id || null,
+          period_start: finalPeriodStart,
+          period_end: finalPeriodEnd,
+          months: months.map((month) => month.label),
+          file_name: fileName,
+          storage_bucket: 'teamw-reports',
+          storage_path: storagePath,
+          file_url: fileUrl,
+          sent_to_email: send_to_email || student.email || null,
+          sent_at: null,
+          status: 'generated',
+          error_message: null,
+        },
+        {
+          onConflict: 'student_id,period_start,period_end',
+        }
+      );
 
     if (reportError) throw reportError;
 

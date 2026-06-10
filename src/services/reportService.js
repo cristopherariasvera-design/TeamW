@@ -35,7 +35,7 @@ export async function generateStudentReport({
             errorBody?.message ||
             backendMessage;
         } catch {
-          // Si no puede leer el JSON, mantiene el mensaje original.
+          // Mantiene mensaje original
         }
       }
 
@@ -49,6 +49,41 @@ export async function generateStudentReport({
     return data;
   } catch (error) {
     console.error('Error generateStudentReport:', error.message || error);
+    throw error;
+  }
+}
+
+export async function getStudentReports(studentId) {
+  try {
+    if (!studentId) {
+      throw new Error('Falta studentId para consultar reportes.');
+    }
+
+    const { data, error } = await supabase
+      .from('student_reports')
+      .select(`
+        id,
+        student_id,
+        coach_id,
+        period_start,
+        period_end,
+        months,
+        file_name,
+        file_url,
+        storage_path,
+        sent_to_email,
+        sent_at,
+        status,
+        created_at
+      `)
+      .eq('student_id', studentId)
+      .order('created_at', { ascending: false });
+
+    if (error) throw error;
+
+    return data || [];
+  } catch (error) {
+    console.error('Error getStudentReports:', error.message || error);
     throw error;
   }
 }

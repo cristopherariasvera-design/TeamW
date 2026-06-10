@@ -23,7 +23,10 @@ import {
 import { createClient } from '@supabase/supabase-js';
 import { Ionicons } from '@expo/vector-icons';
 import { useFocusEffect } from '@react-navigation/native';
-import { generateStudentReport } from '../../services/reportService';
+import {
+  generateStudentReport,
+  getStudentReports,
+} from '../../services/reportService';
 
 const isolatedAuthClient =
   SUPABASE_URL && SUPABASE_ANON_KEY
@@ -162,6 +165,11 @@ export default function StudentManagement({ route, navigation }) {
   const [refreshing, setRefreshing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [generatingReportId, setGeneratingReportId] = useState(null);
+
+  const [reportsModalVisible, setReportsModalVisible] = useState(false);
+  const [selectedReportsStudent, setSelectedReportsStudent] = useState(null);
+  const [studentReports, setStudentReports] = useState([]);
+  const [loadingReports, setLoadingReports] = useState(false);
 
   const [search, setSearch] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
@@ -472,6 +480,82 @@ export default function StudentManagement({ route, navigation }) {
       );
     } finally {
       setGeneratingReportId(null);
+    }
+  };
+
+  const handleOpenReports = async (student) => {
+    if (!student?.id) {
+      showMessage('Error', 'No se encontró el ID del alumno.');
+      return;
+    }
+
+    try {
+      setSelectedReportsStudent(student);
+      setReportsModalVisible(true);
+      setLoadingReports(true);
+
+      const reports = await getStudentReports(student.id);
+
+      setStudentReports(reports);
+    } catch (error) {
+      console.error('Error cargando reportes:', error.message || error);
+
+      showMessage(
+        'Error',
+        error.message || 'No se pudieron cargar los reportes del atleta.'
+      );
+    } finally {
+      setLoadingReports(false);
+    }
+  };
+
+  const handleCloseReports = () => {
+    setReportsModalVisible(false);
+    setSelectedReportsStudent(null);
+    setStudentReports([]);
+    setLoadingReports(false);
+  };
+
+  const handleOpenReportUrl = async (url) => {
+    if (!url) {
+      showMessage('Sin link', 'Este reporte no tiene link disponible.');
+      return;
+    }
+
+    try {
+      await Linking.openURL(url);
+    } catch (error) {
+      console.error('Error abriendo reporte:', error.message || error);
+      showMessage('Error', 'No se pudo abrir el link del reporte.');
+    }
+  };
+
+  const handleCopyReportLink = async (url) => {
+    if (!url) {
+      showMessage('Sin link', 'Este reporte no tiene link disponible.');
+      return;
+    }
+
+    try {
+      if (
+        Platform.OS === 'web' &&
+        typeof navigator !== 'undefined' &&
+        navigator.clipboard
+      ) {
+        await navigator.clipboard.writeText(url);
+
+        showMessage(
+          'Link copiado',
+          'El link del Excel fue copiado al portapapeles.'
+        );
+
+        return;
+      }
+
+      showMessage('Link del reporte', url);
+    } catch (error) {
+      console.error('Error copiando link:', error.message || error);
+      showMessage('Error', 'No se pudo copiar el link.');
     }
   };
 
@@ -802,6 +886,18 @@ export default function StudentManagement({ route, navigation }) {
               </>
             )}
           </TouchableOpacity>
+
+          <TouchableOpacity
+            style={styles.viewReportsButton}
+            onPress={() => handleOpenReports(item)}
+            activeOpacity={0.85}
+          >
+            <Ionicons name="folder-open-outline" size={15} color="#FFD700" />
+
+            <Text style={styles.viewReportsButtonText}>
+              Ver reportes
+            </Text>
+          </TouchableOpacity>
         </View>
 
         <View style={styles.cardActions}>
@@ -874,6 +970,136 @@ export default function StudentManagement({ route, navigation }) {
           ))
         )}
       </ScrollView>
+
+      <Modal
+        visible={reportsModalVisible}
+        animationType="slide"
+        transparent
+        onRequestClose={handleCloseReports}
+      >
+        <View style={styles.modalOverlay}>
+          <View style={styles.reportsModalContent}>
+            <View style={styles.modalHandle} />
+
+            <View style={styles.reportsHeader}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.reportsTitle}>
+                  Reportes generados
+                </Text>
+
+                <Text style={styles.reportsSubtitle} numberOfLines={1}>
+                  {selectedReportsStudent?.full_name || 'Atleta'}
+                </Text>
+              </View>
+
+              <TouchableOpacity onPress={handleCloseReports}>
+                <Ionicons name="close-circle" size={32} color="#444" />
+              </TouchableOpacity>
+            </View>
+
+            {loadingReports ? (
+              <View style={styles.reportsLoading}>
+                <ActivityIndicator color="#FFD700" />
+
+                <Text style={styles.reportsLoadingText}>
+                  Cargando reportes...
+                </Text>
+              </View>
+            ) : studentReports.length === 0 ? (
+              <View style={styles.reportsEmpty}>
+                <Ionicons name="document-text-outline" size={42} color="#333" />
+
+                <Text style={styles.reportsEmptyTitle}>
+                  Sin reportes
+                </Text>
+
+                <Text style={styles.reportsEmptyText}>
+                  Todavía no hay reportes generados para este atleta.
+                </Text>
+              </View>
+            ) : (
+              <ScrollView
+                showsVerticalScrollIndicator={false}
+                contentContainerStyle={{ paddingBottom: 24 }}
+              >
+                {studentReports.map((report) => (
+                  <View key={report.id} style={styles.reportCard}>
+                    <View style={styles.reportCardHeader}>
+                      <Ionicons
+                        name="document-attach-outline"
+                        size={18}
+                        color="#FFD700"
+                      />
+
+                      <View style={{ flex: 1, marginLeft: 8 }}>
+                        <Text style={styles.reportFileName} numberOfLines={2}>
+                          {report.file_name}
+                        </Text>
+
+                        <Text style={styles.reportPeriod}>
+                          {fmtDate(report.period_start)} → {fmtDate(report.period_end)}
+                        </Text>
+                      </View>
+                    </View>
+
+                    <View style={styles.reportMetaRow}>
+                      <Text style={styles.reportMetaLabel}>
+                        Estado
+                      </Text>
+
+                      <Text style={styles.reportMetaValue}>
+                        {report.status || 'generated'}
+                      </Text>
+                    </View>
+
+                    <View style={styles.reportMetaRow}>
+                      <Text style={styles.reportMetaLabel}>
+                        Creado
+                      </Text>
+
+                      <Text style={styles.reportMetaValue}>
+                        {fmtDate(report.created_at?.substring(0, 10))}
+                      </Text>
+                    </View>
+
+                    {Array.isArray(report.months) && report.months.length > 0 && (
+                      <Text style={styles.reportMonths} numberOfLines={2}>
+                        {report.months.join(' · ')}
+                      </Text>
+                    )}
+
+                    <View style={styles.reportActions}>
+                      <TouchableOpacity
+                        style={styles.openReportButton}
+                        onPress={() => handleOpenReportUrl(report.file_url)}
+                        activeOpacity={0.85}
+                      >
+                        <Ionicons name="open-outline" size={15} color="#000" />
+
+                        <Text style={styles.openReportButtonText}>
+                          Abrir Excel
+                        </Text>
+                      </TouchableOpacity>
+
+                      <TouchableOpacity
+                        style={styles.copyReportButton}
+                        onPress={() => handleCopyReportLink(report.file_url)}
+                        activeOpacity={0.85}
+                      >
+                        <Ionicons name="copy-outline" size={15} color="#FFD700" />
+
+                        <Text style={styles.copyReportButtonText}>
+                          Copiar link
+                        </Text>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                ))}
+              </ScrollView>
+            )}
+          </View>
+        </View>
+      </Modal>
 
       <Modal
         visible={modalVisible}
@@ -1334,6 +1560,28 @@ const styles = StyleSheet.create({
     marginLeft: 6,
   },
 
+  viewReportsButton: {
+    marginHorizontal: 13,
+    marginBottom: 13,
+    backgroundColor: '#070707',
+    borderRadius: 12,
+    paddingVertical: 11,
+    paddingHorizontal: 14,
+    borderWidth: 1,
+    borderColor: '#333',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+
+  viewReportsButtonText: {
+    color: '#FFD700',
+    fontSize: 11,
+    fontWeight: '900',
+    textTransform: 'uppercase',
+    marginLeft: 6,
+  },
+
   cardActions: {
     width: 50,
     justifyContent: 'center',
@@ -1344,6 +1592,169 @@ const styles = StyleSheet.create({
 
   actionBtn: {
     padding: 10,
+  },
+
+  reportsModalContent: {
+    backgroundColor: '#0A0A0A',
+    borderTopLeftRadius: 30,
+    borderTopRightRadius: 30,
+    paddingHorizontal: 22,
+    paddingTop: 12,
+    paddingBottom: 0,
+    maxHeight: '88%',
+    borderTopWidth: 2,
+    borderTopColor: '#FFD700',
+    marginTop: 'auto',
+  },
+
+  reportsHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: 16,
+  },
+
+  reportsTitle: {
+    color: '#fff',
+    fontSize: 22,
+    fontWeight: '900',
+  },
+
+  reportsSubtitle: {
+    color: '#777',
+    fontSize: 12,
+    fontWeight: '700',
+    marginTop: 3,
+  },
+
+  reportsLoading: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 50,
+  },
+
+  reportsLoadingText: {
+    color: '#777',
+    fontSize: 12,
+    fontWeight: '700',
+    marginTop: 10,
+  },
+
+  reportsEmpty: {
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 50,
+  },
+
+  reportsEmptyTitle: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '900',
+    marginTop: 10,
+  },
+
+  reportsEmptyText: {
+    color: '#777',
+    fontSize: 12,
+    fontWeight: '700',
+    marginTop: 4,
+    textAlign: 'center',
+  },
+
+  reportCard: {
+    backgroundColor: '#111',
+    borderRadius: 16,
+    borderWidth: 1,
+    borderColor: '#222',
+    padding: 14,
+    marginBottom: 12,
+  },
+
+  reportCardHeader: {
+    flexDirection: 'row',
+    alignItems: 'flex-start',
+  },
+
+  reportFileName: {
+    color: '#fff',
+    fontSize: 13,
+    fontWeight: '900',
+  },
+
+  reportPeriod: {
+    color: '#777',
+    fontSize: 11,
+    fontWeight: '700',
+    marginTop: 3,
+  },
+
+  reportMetaRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginTop: 10,
+  },
+
+  reportMetaLabel: {
+    color: '#555',
+    fontSize: 10,
+    fontWeight: '900',
+    textTransform: 'uppercase',
+  },
+
+  reportMetaValue: {
+    color: '#FFD700',
+    fontSize: 10,
+    fontWeight: '900',
+  },
+
+  reportMonths: {
+    color: '#777',
+    fontSize: 11,
+    fontWeight: '700',
+    marginTop: 10,
+  },
+
+  reportActions: {
+    flexDirection: 'row',
+    gap: 8,
+    marginTop: 14,
+  },
+
+  openReportButton: {
+    flex: 1,
+    backgroundColor: '#FFD700',
+    borderRadius: 12,
+    paddingVertical: 11,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexDirection: 'row',
+  },
+
+  openReportButtonText: {
+    color: '#000',
+    fontSize: 11,
+    fontWeight: '900',
+    textTransform: 'uppercase',
+    marginLeft: 6,
+  },
+
+  copyReportButton: {
+    flex: 1,
+    backgroundColor: '#050505',
+    borderRadius: 12,
+    paddingVertical: 11,
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexDirection: 'row',
+    borderWidth: 1,
+    borderColor: '#333',
+  },
+
+  copyReportButtonText: {
+    color: '#FFD700',
+    fontSize: 11,
+    fontWeight: '900',
+    textTransform: 'uppercase',
+    marginLeft: 6,
   },
 
   modalOverlay: {
