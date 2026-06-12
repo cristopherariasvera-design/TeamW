@@ -141,6 +141,166 @@ function extractBlocks(sections: unknown) {
   }
 }
 
+function bytesToBase64(bytes: Uint8Array) {
+  let binary = '';
+  const chunkSize = 0x8000;
+
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    const chunk = bytes.subarray(i, i + chunkSize);
+    binary += String.fromCharCode(...chunk);
+  }
+
+  return btoa(binary);
+}
+
+function textToBase64(value: string) {
+  return bytesToBase64(new TextEncoder().encode(value));
+}
+
+function base64UrlEncode(value: string) {
+  const bytes = new TextEncoder().encode(value);
+
+  return bytesToBase64(bytes)
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=+$/g, '');
+}
+
+function wrapBase64(value: string) {
+  return value.match(/.{1,76}/g)?.join('\r\n') || '';
+}
+
+function encodeMimeHeader(value: string) {
+  return `=?UTF-8?B?${textToBase64(value)}?=`;
+}
+
+function escapeHtml(value: string) {
+  return value
+    .replaceAll('&', '&amp;')
+    .replaceAll('<', '&lt;')
+    .replaceAll('>', '&gt;')
+    .replaceAll('"', '&quot;')
+    .replaceAll("'", '&#039;');
+}
+
+async function getGmailAccessToken() {
+  const clientId = Deno.env.get('GOOGLE_CLIENT_ID');
+  const clientSecret = Deno.env.get('GOOGLE_CLIENT_SECRET');
+  const refreshToken = Deno.env.get('GOOGLE_REFRESH_TOKEN');
+
+  if (!clientId || !clientSecret || !refreshToken) {
+    throw new Error(
+      'Faltan secrets de Gmail: GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET o GOOGLE_REFRESH_TOKEN.'
+    );
+  }
+
+  const response = await fetch('https://oauth2.googleapis.com/token', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/x-www-form-urlencoded',
+    },
+    body: new URLSearchParams({
+      client_id: clientId,
+      client_secret: clientSecret,
+      refresh_token: refreshToken,
+      grant_type: 'refresh_token',
+    }),
+  });
+
+  const result = await response.json();
+
+  if (!response.ok) {
+    throw new Error(
+      result?.error_description ||
+        result?.error ||
+        'No se pudo obtener access token de Gmail.'
+    );
+  }
+
+  if (!result.access_token) {
+    throw new Error('Google no devolvió access_token.');
+  }
+
+  return result.access_token as string;
+}
+
+async function sendGmailWithAttachment({
+  to,
+  subject,
+  html,
+  fileName,
+  fileBytes,
+}: {
+  to: string;
+  subject: string;
+  html: string;
+  fileName: string;
+  fileBytes: Uint8Array;
+}) {
+  const fromEmail = Deno.env.get('GMAIL_FROM_EMAIL');
+
+  if (!fromEmail) {
+    throw new Error('Falta secret GMAIL_FROM_EMAIL.');
+  }
+
+  const accessToken = await getGmailAccessToken();
+  const boundary = `teamw_boundary_${crypto.randomUUID()}`;
+
+  const htmlBase64 = wrapBase64(textToBase64(html));
+  const attachmentBase64 = wrapBase64(bytesToBase64(fileBytes));
+
+  const mimeMessage = [
+    `From: ${fromEmail}`,
+    `To: ${to}`,
+    `Subject: ${encodeMimeHeader(subject)}`,
+    'MIME-Version: 1.0',
+    `Content-Type: multipart/mixed; boundary="${boundary}"`,
+    '',
+    `--${boundary}`,
+    'Content-Type: text/html; charset="UTF-8"',
+    'Content-Transfer-Encoding: base64',
+    '',
+    htmlBase64,
+    '',
+    `--${boundary}`,
+    `Content-Type: application/vnd.openxmlformats-officedocument.spreadsheetml.sheet; name="${fileName}"`,
+    `Content-Disposition: attachment; filename="${fileName}"`,
+    'Content-Transfer-Encoding: base64',
+    '',
+    attachmentBase64,
+    '',
+    `--${boundary}--`,
+  ].join('\r\n');
+
+  const raw = base64UrlEncode(mimeMessage);
+
+  const response = await fetch(
+    'https://gmail.googleapis.com/gmail/v1/users/me/messages/send',
+    {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${accessToken}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        raw,
+      }),
+    }
+  );
+
+  const result = await response.json();
+
+  if (!response.ok) {
+    throw new Error(
+      result?.error?.message ||
+        result?.error_description ||
+        'No se pudo enviar el correo por Gmail.'
+    );
+  }
+
+  return result;
+}
+
 serve(async (req: Request): Promise<Response> => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', {
@@ -150,7 +310,6 @@ serve(async (req: Request): Promise<Response> => {
 
   try {
     const body = await req.json();
-
     const { student_id, period_start, period_end, send_to_email } = body;
 
     if (!student_id) {
@@ -252,10 +411,12 @@ serve(async (req: Request): Promise<Response> => {
 
       finalPeriodStart = period.start_date;
       finalPeriodEnd = period.end_date;
+
       sessionsPerWeek =
         Number(period.sessions_per_week || 0) ||
         Number(student.sessions_per_week || 0) ||
         3;
+
       configuredWeeks =
         Number(period.plan_weeks || period.weeks || 0) ||
         Number(student.plan_weeks || 0) ||
@@ -266,13 +427,15 @@ serve(async (req: Request): Promise<Response> => {
       throw new Error('El período no tiene fecha de inicio o término.');
     }
 
-    const { data: coach } = student.coach_id
+    const { data: coach, error: coachError } = student.coach_id
       ? await supabase
           .from('profiles')
           .select('id, full_name, email')
           .eq('id', student.coach_id)
           .maybeSingle()
-      : { data: null };
+      : { data: null, error: null };
+
+    if (coachError) throw coachError;
 
     const { data: plans, error: plansError } = await supabase
       .from('plans')
@@ -285,7 +448,6 @@ serve(async (req: Request): Promise<Response> => {
     if (plansError) throw plansError;
 
     const planRows = (plans || []) as PlanItem[];
-
     const months = getMonthsBetween(finalPeriodStart, finalPeriodEnd);
 
     const workbook = XLSX.utils.book_new();
@@ -393,13 +555,17 @@ serve(async (req: Request): Promise<Response> => {
       }
 
       const sheet = XLSX.utils.aoa_to_sheet(rows);
-      XLSX.utils.book_append_sheet(workbook, sheet, month.label.substring(0, 31));
+      XLSX.utils.book_append_sheet(
+        workbook,
+        sheet,
+        month.label.substring(0, 31)
+      );
     });
 
     const excelArrayBuffer = XLSX.write(workbook, {
       bookType: 'xlsx',
       type: 'array',
-    });
+    }) as ArrayBuffer;
 
     const excelBytes = new Uint8Array(excelArrayBuffer);
 
@@ -425,6 +591,77 @@ serve(async (req: Request): Promise<Response> => {
       .getPublicUrl(storagePath);
 
     const fileUrl = publicUrlData.publicUrl;
+    const recipientEmail = send_to_email || student.email || null;
+
+    let emailSent = false;
+    let emailErrorMessage: string | null = null;
+    let sentAt: string | null = null;
+
+    if (recipientEmail) {
+      try {
+        const emailSubject = `Reporte TeamW - ${
+          student.full_name || 'Alumno'
+        } - ${startLabel} a ${endLabel}`;
+
+        const html = `
+          <div style="font-family: Arial, sans-serif; color: #111; line-height: 1.5;">
+            <h2 style="color: #111;">Reporte TeamW</h2>
+
+            <p>Hola <strong>${escapeHtml(student.full_name || 'Alumno')}</strong>,</p>
+
+            <p>
+              Te compartimos tu reporte TeamW correspondiente al período
+              <strong>${escapeHtml(formatDate(finalPeriodStart))}</strong> al
+              <strong>${escapeHtml(formatDate(finalPeriodEnd))}</strong>.
+            </p>
+
+            <p>
+              El archivo Excel viene adjunto en este correo.
+              También puedes descargarlo desde el siguiente enlace:
+            </p>
+
+            <p>
+              <a href="${escapeHtml(fileUrl)}" target="_blank">
+                Descargar reporte Excel
+              </a>
+            </p>
+
+            <hr />
+
+            <p style="font-size: 12px; color: #555;">
+              Este correo fue generado automáticamente por TeamW.
+            </p>
+          </div>
+        `;
+
+        await sendGmailWithAttachment({
+          to: recipientEmail,
+          subject: emailSubject,
+          html,
+          fileName,
+          fileBytes: excelBytes,
+        });
+
+        emailSent = true;
+        sentAt = new Date().toISOString();
+      } catch (emailError: unknown) {
+        console.error('Gmail send error:', emailError);
+
+        if (emailError instanceof Error) {
+          emailErrorMessage = emailError.message;
+        } else if (typeof emailError === 'string') {
+          emailErrorMessage = emailError;
+        } else {
+          emailErrorMessage = JSON.stringify(emailError);
+        }
+      }
+    }
+
+    const status = recipientEmail
+      ? emailSent
+        ? 'sent'
+        : 'email_error'
+      : 'generated';
 
     const { error: reportError } = await supabase
       .from('student_reports')
@@ -439,10 +676,10 @@ serve(async (req: Request): Promise<Response> => {
           storage_bucket: 'teamw-reports',
           storage_path: storagePath,
           file_url: fileUrl,
-          sent_to_email: send_to_email || student.email || null,
-          sent_at: null,
-          status: 'generated',
-          error_message: null,
+          sent_to_email: recipientEmail,
+          sent_at: sentAt,
+          status,
+          error_message: emailErrorMessage,
         },
         {
           onConflict: 'student_id,period_start,period_end',
@@ -454,10 +691,18 @@ serve(async (req: Request): Promise<Response> => {
     return new Response(
       JSON.stringify({
         success: true,
-        message: 'Reporte generado correctamente.',
+        message: emailSent
+          ? 'Reporte generado y enviado por correo correctamente.'
+          : recipientEmail
+          ? 'Reporte generado, pero no se pudo enviar el correo.'
+          : 'Reporte generado correctamente. El alumno no tiene correo registrado.',
         file_name: fileName,
         file_url: fileUrl,
         storage_path: storagePath,
+        email_sent: emailSent,
+        email_to: recipientEmail,
+        email_error: emailErrorMessage,
+        status,
       }),
       {
         headers: {

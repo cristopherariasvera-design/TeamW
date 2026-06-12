@@ -46,6 +46,11 @@ const levels = [
   { id: 'RX', label: 'RX', icon: 'flame-outline' },
 ];
 
+// Correo temporal para pruebas.
+// Mientras esté definido, todos los reportes llegarán a este correo.
+// Cuando quieras volver a enviar al correo real del alumno, déjalo en null.
+const TEST_REPORT_EMAIL = null;
+
 const toDate = (dateString) => {
   if (!dateString) return null;
   return new Date(`${dateString}T12:00:00`);
@@ -454,16 +459,33 @@ export default function StudentManagement({ route, navigation }) {
     try {
       setGeneratingReportId(student.id);
 
+      const reportEmail = TEST_REPORT_EMAIL || student.email || null;
+
       const result = await generateStudentReport({
         studentId: student.id,
         periodStart: student.plan_start_date || null,
         periodEnd: student.plan_end_date || null,
-        sendToEmail: student.email || null,
+        sendToEmail: reportEmail,
       });
 
+      const baseMessage =
+        result?.message || 'Reporte generado correctamente.';
+
+      const emailInfo = result?.email_to
+        ? `\n\nCorreo destino:\n${result.email_to}`
+        : '\n\nCorreo destino:\nSin correo registrado';
+
+      const emailStatus = result?.email_sent
+        ? '\n\nEstado correo: enviado ✅'
+        : result?.email_error
+        ? `\n\nEstado correo: error ❌\n${result.email_error}`
+        : '\n\nEstado correo: no enviado';
+
       showMessage(
-        'Reporte generado',
-        `Se generó correctamente el Excel:\n\n${result.file_name}`
+        'Reporte TeamW',
+        `${baseMessage}\n\nArchivo:\n${
+          result.file_name || 'Sin nombre'
+        }${emailInfo}${emailStatus}`
       );
 
       if (result?.file_url) {
